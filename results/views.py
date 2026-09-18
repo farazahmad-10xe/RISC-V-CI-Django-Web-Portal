@@ -157,7 +157,7 @@ def ingest_run(request):
             "parameters": payload.get("parameters", {}),
             "metadata": payload.get("metadata", {}),
         }
-        run, _ = TestRun.objects.update_or_create(
+        run, created = TestRun.objects.update_or_create(
             job=job, build_number=build_number, defaults=run_defaults
         )
         for item in payload.get("results", []):
@@ -191,4 +191,7 @@ def ingest_run(request):
                     "sha256": item.get("sha256", ""),
                 },
             )
-    return JsonResponse({"id": run.id, "url": run.get_absolute_url(), "created": True}, status=201)
+    return JsonResponse(
+        {"id": run.id, "url": run.get_absolute_url(), "created": created},
+        status=201 if created else 200,
+    )

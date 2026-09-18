@@ -46,6 +46,17 @@ class PortalTests(TestCase):
         self.assertEqual(TestRun.objects.get().expected_cases, 485)
         self.assertEqual(TestRun.objects.get().test_results.count(), 1)
 
+        payload["completed_cases"] = 7
+        response = self.client.post(
+            reverse("api-ingest-run"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            headers={"X-Portal-Token": "test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["created"])
+        self.assertEqual(TestRun.objects.get().completed_cases, 7)
+
     def test_artifact_cannot_escape_root(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
         job = JenkinsJob.objects.create(board=board, name="vf2-job")

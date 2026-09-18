@@ -60,6 +60,44 @@ Minimal example:
 
 Files are stored below `PORTAL_ARTIFACT_ROOT`; only their metadata and relative paths are stored in PostgreSQL.
 
+### Jenkins publisher
+
+`tools/publish_jenkins_results.py` reads the runner's existing files directly:
+
+- `state.env` for run identity and expected count
+- `sail_reference_status.tsv` and `spike_status.tsv` for model results
+- `cases.json` for hardware PASS/FAIL and failure details
+
+It merges them into one idempotent API update. Store the ingest token in Jenkins as a
+Secret Text credential named `riscv-portal-ingest-token`, then call the publisher from a
+Declarative Pipeline `post { always { ... } }` block so failed and aborted runs are also reported:
+
+```groovy
+script {
+  withEnv(["PORTAL_BUILD_RESULT=${currentBuild.currentResult}"]) {
+    withCredentials([string(credentialsId: 'riscv-portal-ingest-token', variable: 'PORTAL_INGEST_TOKEN')]) {
+      sh '''python3 "$PORTAL_PUBLISHER" \
+        --state-root "$STATE_ROOT" \
+        --run-root "$RUN_ROOT" \
+        --board-slug vf2 \
+        --board-name "VisionFive 2" \
+        --core-profile "SiFive U74" \
+        --job-name "$JOB_NAME" \
+        --build-number "$BUILD_NUMBER" \
+        --build-url "$BUILD_URL" \
+        --status "$PORTAL_BUILD_RESULT" \
+        --portal-url https://192.168.100.150/portal/ \
+        --ca-file /etc/ssl/certs/jenkins-internal-ca.crt'''
+    }
+  }
+}
+```
+
+Set `PORTAL_PUBLISHER`, `STATE_ROOT`, and `RUN_ROOT` to stable absolute paths on the
+hardware agent. Do not read the token from a workspace file or place it in job XML.
+
+Use `--no-post --output payload.json` to validate a job's mapping without changing the portal.
+
 ## Apollo production layout
 
 ```text
