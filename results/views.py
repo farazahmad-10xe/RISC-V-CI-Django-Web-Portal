@@ -24,6 +24,34 @@ def dashboard(request):
             .order_by("-started_at", "-id")
             .first()
         )
+        board.suite_summaries = []
+        if board.latest_run:
+            summaries = {
+                item["test_case__category"]: item
+                for item in board.latest_run.test_results.values("test_case__category").annotate(
+                    executed=Count(
+                        "id",
+                        filter=Q(
+                            hardware_status__in=[Status.PASS, Status.FAIL, Status.SKIPPED]
+                        ),
+                    ),
+                    passed=Count("id", filter=Q(hardware_status=Status.PASS)),
+                    failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
+                )
+            }
+            for category in ("Privileged", "Non-Privileged"):
+                values = summaries.get(category, {})
+                executed = values.get("executed", 0)
+                passed = values.get("passed", 0)
+                board.suite_summaries.append(
+                    {
+                        "name": category,
+                        "executed": executed,
+                        "passed": passed,
+                        "failed": values.get("failed", 0),
+                        "pass_percent": round(passed * 100 / executed, 1) if executed else 0,
+                    }
+                )
     recent_runs = TestRun.objects.select_related("job", "job__board").order_by(
         "-started_at", "-id"
     )[:12]

@@ -14,6 +14,8 @@ from collections import Counter
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
+from zipfile import BadZipFile, ZipFile
 
 STATUS_MAP = {
     "SUCCESS": "PASS",
@@ -31,6 +33,15 @@ STATUS_MAP = {
     "NOT RUN": "SKIPPED",
     "NOT_RUN": "SKIPPED",
 }
+
+SUITE_SHEETS = {
+    "Privileged Tests": "Privileged",
+    "Non-Privileged Tests": "Non-Privileged",
+    "Vector Tests": "Vector",
+}
+SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,6 +108,69 @@ def read_cases(path: Path) -> dict[str, dict]:
     }
 
 
+def read_xlsx_categories(path: Path) -> dict[str, str]:
+    """Read test membership from the report workbook without an Excel dependency."""
+    if not path.is_file():
+        return {}
+    namespaces = {"main": SPREADSHEET_NS}
+    categories: dict[str, str] = {}
+    try:
+        with ZipFile(path) as workbook_zip:
+            shared_strings: list[str] = []
+            if "xl/sharedStrings.xml" in workbook_zip.namelist():
+                shared_root = ElementTree.fromstring(workbook_zip.read("xl/sharedStrings.xml"))
+                shared_strings = [
+                    "".join(node.text or "" for node in item.iter(f"{{{SPREADSHEET_NS}}}t"))
+                    for item in shared_root.findall(f"{{{SPREADSHEET_NS}}}si")
+                ]
+
+            workbook = ElementTree.fromstring(workbook_zip.read("xl/workbook.xml"))
+            relationships = ElementTree.fromstring(
+                workbook_zip.read("xl/_rels/workbook.xml.rels")
+            )
+            targets = {
+                relationship.attrib["Id"]: relationship.attrib["Target"]
+                for relationship in relationships.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
+            }
+
+            for sheet in workbook.findall(".//main:sheet", namespaces):
+                category = SUITE_SHEETS.get(sheet.attrib.get("name", ""))
+                if not category:
+                    continue
+                relation_id = sheet.attrib[f"{{{OFFICE_REL_NS}}}id"]
+                target = targets[relation_id].lstrip("/")
+                sheet_path = target if target.startswith("xl/") else f"xl/{target}"
+                sheet_root = ElementTree.fromstring(workbook_zip.read(sheet_path))
+                for row in sheet_root.findall(".//main:row", namespaces)[1:]:
+                    first_cell = next(
+                        (
+                            cell
+                            for cell in row.findall("main:c", namespaces)
+                            if cell.attrib.get("r", "").startswith("A")
+                        ),
+                        None,
+                    )
+                    if first_cell is None:
+                        continue
+                    value = ""
+                    if first_cell.attrib.get("t") == "inlineStr":
+                        value = "".join(
+                            node.text or ""
+                            for node in first_cell.iter(f"{{{SPREADSHEET_NS}}}t")
+                        )
+                    else:
+                        value_node = first_cell.find("main:v", namespaces)
+                        if value_node is not None and value_node.text:
+                            value = value_node.text
+                            if first_cell.attrib.get("t") == "s":
+                                value = shared_strings[int(value)]
+                    if value:
+                        categories[value] = category
+    except (BadZipFile, ElementTree.ParseError, KeyError, OSError, ValueError):
+        return {}
+    return categories
+
+
 def extension_for(name: str) -> str:
     return re.sub(r"-\d+$", "", name)
 
@@ -108,6 +182,7 @@ def build_payload(args: argparse.Namespace) -> dict:
     sail = read_status_tsv(state_root / "sail_reference_status.tsv")
     spike = read_status_tsv(state_root / "spike_status.tsv")
     cases = read_cases(run_root / "cases.json")
+    categories = read_xlsx_categories(state_root / "test_status_matrix.xlsx")
     names = sorted(set(sail) | set(spike) | set(cases), key=str.casefold)
 
     results = []
@@ -120,6 +195,7 @@ def build_payload(args: argparse.Namespace) -> dict:
         results.append(
             {
                 "name": name,
+                "category": categories.get(name, ""),
                 "extension": extension_for(name),
                 "sail_status": sail.get(name, normalize_status(case.get("sail_status"))),
                 "spike_status": spike.get(name, "UNKNOWN"),

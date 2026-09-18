@@ -30,6 +30,15 @@
     <div class="progress-label"><span>Build #{{ board.latest_run.build_number }}</span><span>{{ board.latest_run.completed_cases }} / {{ board.latest_run.expected_cases }}</span></div>
     <div class="progress"><span style="width: {{ board.latest_run.progress_percent }}%"></span></div>
     <div class="board-metrics"><span><b>{{ board.latest_run.pass_percent }}%</b> pass rate</span><span><b>{{ board.latest_run.failed_cases }}</b> failed</span></div>
+    <div class="suite-grid">
+      {% for suite in board.suite_summaries %}
+      <div class="suite-summary">
+        <span>{{ suite.name }}</span>
+        <strong>{{ suite.pass_percent }}%</strong>
+        <small>{{ suite.passed }} passed · {{ suite.failed }} failed · {{ suite.executed }} executed</small>
+      </div>
+      {% endfor %}
+    </div>
     {% else %}<p class="empty">Waiting for the first published result.</p>{% endif %}
   </a>
   {% empty %}<div class="empty-panel">No boards have been configured.</div>{% endfor %}

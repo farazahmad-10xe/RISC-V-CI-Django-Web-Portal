@@ -6,7 +6,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from .models import Artifact, Board, JenkinsJob, TestRun
+from .models import Artifact, Board, JenkinsJob, Status, TestResult, TestRun
+from .models import TestCase as ACTTestCase
 
 
 class PortalTests(TestCase):
@@ -18,6 +19,30 @@ class PortalTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.client.force_login(self.user)
         self.assertEqual(self.client.get(reverse("dashboard")).status_code, 200)
+
+    def test_dashboard_shows_suite_results_for_each_board(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-job")
+        run = TestRun.objects.create(job=job, build_number=1)
+        passing = ACTTestCase.objects.create(name="ExceptionsM-01", category="Privileged")
+        failing = ACTTestCase.objects.create(name="I-add-01", category="Non-Privileged")
+        TestResult.objects.create(
+            run=run,
+            test_case=passing,
+            hardware_status=Status.PASS,
+        )
+        TestResult.objects.create(
+            run=run,
+            test_case=failing,
+            hardware_status=Status.FAIL,
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("dashboard"))
+        self.assertContains(response, "Privileged")
+        self.assertContains(response, "Non-Privileged")
+        self.assertContains(response, "1 passed · 0 failed · 1 executed")
+        self.assertContains(response, "0 passed · 1 failed · 1 executed")
 
     @override_settings(PORTAL_INGEST_TOKEN="test-token")
     def test_ingest_creates_run_and_results(self):
