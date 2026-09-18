@@ -1,0 +1,53 @@
+{% extends "results/base.html" %}
+{% block title %}Dashboard · RISC-V CI Portal{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Hardware certification overview</p>
+    <h1>Board validation at a glance</h1>
+    <p class="muted">Live execution health, ACT outcomes, and downloadable reports from Apollo.</p>
+  </div>
+  <div class="live-pill"><span></span> Dynamic reporting</div>
+</section>
+
+<section class="stat-grid">
+  <article class="stat"><span>Total runs</span><strong>{{ totals.runs|default:0 }}</strong></article>
+  <article class="stat pass"><span>Passing</span><strong>{{ totals.passing|default:0 }}</strong></article>
+  <article class="stat fail"><span>Needs attention</span><strong>{{ totals.failing|default:0 }}</strong></article>
+  <article class="stat running"><span>Running now</span><strong>{{ totals.running|default:0 }}</strong></article>
+</section>
+
+<div class="section-heading"><div><p class="eyebrow">Compute fleet</p><h2>Boards</h2></div></div>
+<section class="board-grid">
+  {% for board in boards %}
+  <a class="board-card" href="{{ board.get_absolute_url }}">
+    <div class="board-card-head">
+      <div><span class="board-icon">{{ board.name|slice:":1" }}</span><h3>{{ board.name }}</h3></div>
+      {% if board.latest_run %}<span class="badge status-{{ board.latest_run.status|lower }}">{{ board.latest_run.get_status_display }}</span>{% else %}<span class="badge">No runs</span>{% endif %}
+    </div>
+    <p>{{ board.core_profile|default:"Core profile not recorded" }}</p>
+    {% if board.latest_run %}
+    <div class="progress-label"><span>Build #{{ board.latest_run.build_number }}</span><span>{{ board.latest_run.completed_cases }} / {{ board.latest_run.expected_cases }}</span></div>
+    <div class="progress"><span style="width: {{ board.latest_run.progress_percent }}%"></span></div>
+    <div class="board-metrics"><span><b>{{ board.latest_run.pass_percent }}%</b> pass rate</span><span><b>{{ board.latest_run.failed_cases }}</b> failed</span></div>
+    {% else %}<p class="empty">Waiting for the first published result.</p>{% endif %}
+  </a>
+  {% empty %}<div class="empty-panel">No boards have been configured.</div>{% endfor %}
+</section>
+
+<div class="section-heading"><div><p class="eyebrow">Activity</p><h2>Recent runs</h2></div></div>
+<section class="panel table-panel">
+  <table>
+    <thead><tr><th>Board</th><th>Job</th><th>Build</th><th>Status</th><th>Tests</th><th>Pass rate</th><th>Started</th></tr></thead>
+    <tbody>
+      {% for run in recent_runs %}
+      <tr data-href="{{ run.get_absolute_url }}">
+        <td><strong>{{ run.job.board.name }}</strong></td><td>{{ run.job.name }}</td><td>#{{ run.build_number }}</td>
+        <td><span class="badge status-{{ run.status|lower }}">{{ run.get_status_display }}</span></td>
+        <td>{{ run.completed_cases }} / {{ run.expected_cases }}</td><td>{{ run.pass_percent }}%</td><td>{{ run.started_at|date:"M d, Y H:i"|default:"—" }}</td>
+      </tr>
+      {% empty %}<tr><td colspan="7" class="empty">No runs published yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,0 +1,22 @@
+[project]
+name = "riscv-ci-portal"
+version = "0.1.0"
+description = "Dynamic ACT results portal for RISC-V hardware CI"
+requires-python = ">=3.10"
+dependencies = [
+  "Django>=5.2,<5.3",
+  "gunicorn>=23,<24",
+  "psycopg[binary]>=3.2,<4",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.12",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

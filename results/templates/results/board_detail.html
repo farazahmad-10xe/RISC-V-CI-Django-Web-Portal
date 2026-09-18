@@ -1,0 +1,13 @@
+{% extends "results/base.html" %}
+{% block title %}{{ board.name }} · RISC-V CI Portal{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{% url 'dashboard' %}">Dashboard</a><span>/</span><span>{{ board.name }}</span></nav>
+<section class="hero compact"><div><p class="eyebrow">Board report</p><h1>{{ board.name }}</h1><p class="muted">{{ board.core_profile }}{% if board.description %} · {{ board.description }}{% endif %}</p></div></section>
+<section class="panel filters">
+  <form method="get"><label>Status<select name="status" onchange="this.form.submit()"><option value="">All statuses</option>{% for value,label in statuses %}<option value="{{ value }}">{{ label }}</option>{% endfor %}<option value="PASS" {% if selected_status == 'PASS' %}selected{% endif %}>Pass</option><option value="FAIL" {% if selected_status == 'FAIL' %}selected{% endif %}>Fail</option><option value="RUNNING" {% if selected_status == 'RUNNING' %}selected{% endif %}>Running</option><option value="UNSTABLE" {% if selected_status == 'UNSTABLE' %}selected{% endif %}>Unstable</option></select></label></form>
+</section>
+<section class="panel table-panel">
+  <table><thead><tr><th>Build</th><th>Job</th><th>Status</th><th>Progress</th><th>Pass</th><th>Fail</th><th>Started</th><th>Duration</th></tr></thead>
+  <tbody>{% for run in runs %}<tr data-href="{{ run.get_absolute_url }}"><td><strong>#{{ run.build_number }}</strong></td><td>{{ run.job.name }}</td><td><span class="badge status-{{ run.status|lower }}">{{ run.get_status_display }}</span></td><td>{{ run.completed_cases }} / {{ run.expected_cases }}</td><td class="text-pass">{{ run.passed_cases }}</td><td class="text-fail">{{ run.failed_cases }}</td><td>{{ run.started_at|date:"M d, Y H:i"|default:"—" }}</td><td>{% if run.finished_at %}Complete{% else %}In progress{% endif %}</td></tr>{% empty %}<tr><td colspan="8" class="empty">No runs found.</td></tr>{% endfor %}</tbody></table>
+</section>
+{% endblock %}

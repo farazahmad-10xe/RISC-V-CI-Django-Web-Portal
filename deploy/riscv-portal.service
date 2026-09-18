@@ -1,0 +1,21 @@
+[Unit]
+Description=RISC-V CI Results Portal
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=riscv-portal
+Group=riscv-portal
+WorkingDirectory=/opt/riscv-ci-portal
+EnvironmentFile=/etc/riscv-ci-portal.env
+ExecStart=/opt/riscv-ci-portal/.venv/bin/gunicorn portal.wsgi:application --bind 127.0.0.1:8090 --workers 3 --timeout 120 --access-logfile - --error-logfile -
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/riscv-results
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

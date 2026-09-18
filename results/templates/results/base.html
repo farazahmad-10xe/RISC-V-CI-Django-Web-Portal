@@ -1,0 +1,28 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}RISC-V CI Portal{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'results/portal.css' %}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{% url 'dashboard' %}">
+      <span class="brand-mark">RV</span>
+      <span>RISC-V CI Portal</span>
+    </a>
+    <nav>
+      <a href="{% url 'dashboard' %}">Dashboard</a>
+      {% if request.user.is_staff %}<a href="/portal/admin/">Administration</a>{% endif %}
+      <span class="user">{{ request.user.username }}</span>
+      <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="link-button">Sign out</button></form>
+    </nav>
+  </header>
+  <main class="page-shell">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="{% static 'results/portal.js' %}"></script>
+</body>
+</html>
