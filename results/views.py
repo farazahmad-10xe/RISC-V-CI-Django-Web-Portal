@@ -21,7 +21,7 @@ def dashboard(request):
         board.latest_run = (
             TestRun.objects.filter(job__board=board)
             .select_related("job")
-            .order_by("-started_at", "-id")
+            .order_by("-updated_at", "-id")
             .first()
         )
         board.suite_summaries = []
@@ -53,7 +53,7 @@ def dashboard(request):
                     }
                 )
     recent_runs = TestRun.objects.select_related("job", "job__board").order_by(
-        "-started_at", "-id"
+        "-updated_at", "-id"
     )[:12]
     totals = TestRun.objects.aggregate(
         runs=Count("id"),
