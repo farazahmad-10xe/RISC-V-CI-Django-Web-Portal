@@ -72,6 +72,49 @@ class PortalTests(TestCase):
         self.assertNotContains(response, "PassedM-01")
         self.assertContains(response, "Not Run (Skipped + Unknown)")
 
+    def test_non_staff_user_cannot_delete_run(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-job")
+        run = TestRun.objects.create(job=job, build_number=4)
+
+        self.client.force_login(self.user)
+        detail = self.client.get(reverse("run-detail", args=["vf2", 4]))
+        self.assertNotContains(detail, "Delete from portal")
+        response = self.client.post(reverse("run-delete", args=["vf2", 4]))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(TestRun.objects.filter(id=run.id).exists())
+
+    def test_staff_user_can_delete_run_and_portal_uart_files(self):
+        staff = get_user_model().objects.create_user(
+            "operator", password="safe-test-password", is_staff=True
+        )
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-job")
+        run = TestRun.objects.create(job=job, build_number=4)
+        test_case = ACTTestCase.objects.create(name="ExceptionsM-01")
+        result = TestResult.objects.create(run=run, test_case=test_case)
+        Artifact.objects.create(run=run, name="summary", relative_path="summary.md")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact_root = Path(temporary).resolve()
+            uart_directory = artifact_root / "uart" / "vf2" / "vf2-job" / "4"
+            uart_directory.mkdir(parents=True)
+            (uart_directory / "ExceptionsM-01.log").write_text("no test run")
+
+            self.client.force_login(staff)
+            detail = self.client.get(reverse("run-detail", args=["vf2", 4]))
+            self.assertContains(detail, "Delete from portal")
+            with override_settings(PORTAL_ARTIFACT_ROOT=artifact_root):
+                response = self.client.post(reverse("run-delete", args=["vf2", 4]))
+
+            self.assertRedirects(response, reverse("board-detail", args=["vf2"]))
+            self.assertFalse(uart_directory.exists())
+
+        self.assertFalse(TestRun.objects.filter(id=run.id).exists())
+        self.assertFalse(TestResult.objects.filter(id=result.id).exists())
+        self.assertFalse(Artifact.objects.filter(run_id=run.id).exists())
+
     @override_settings(PORTAL_INGEST_TOKEN="test-token")
     def test_ingest_creates_run_and_results(self):
         payload = {

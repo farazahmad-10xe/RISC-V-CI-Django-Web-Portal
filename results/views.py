@@ -4,13 +4,15 @@ import gzip
 import json
 import re
 import secrets
+import shutil
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Count, Q
 from django.http import FileResponse, Http404, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -137,6 +139,40 @@ def run_detail(request, slug, build_number):
             "query": query,
         },
     )
+
+
+@login_required
+@require_POST
+def delete_run(request, slug, build_number):
+    if not request.user.is_staff:
+        raise PermissionDenied("Only portal administrators can delete runs")
+
+    run = get_object_or_404(
+        TestRun.objects.select_related("job", "job__board"),
+        job__board__slug=slug,
+        build_number=build_number,
+    )
+    board_url = run.job.board.get_absolute_url()
+    uart_directory = (
+        settings.PORTAL_ARTIFACT_ROOT
+        / "uart"
+        / _safe_component(run.job.board.slug)
+        / _safe_component(run.job.name)
+        / str(run.build_number)
+    ).resolve()
+    artifact_root = settings.PORTAL_ARTIFACT_ROOT.resolve()
+
+    run.delete()
+
+    try:
+        uart_directory.relative_to(artifact_root)
+    except ValueError:
+        pass
+    else:
+        if uart_directory.is_dir():
+            shutil.rmtree(uart_directory)
+
+    return redirect(board_url)
 
 
 @login_required

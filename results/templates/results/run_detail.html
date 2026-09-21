@@ -2,7 +2,7 @@
 {% block title %}{{ run.job.board.name }} #{{ run.build_number }} · RISC-V CI Portal{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="{% url 'dashboard' %}">Dashboard</a><span>/</span><a href="{{ run.job.board.get_absolute_url }}">{{ run.job.board.name }}</a><span>/</span><span>Build #{{ run.build_number }}</span></nav>
-<section class="hero compact"><div><p class="eyebrow">{{ run.job.name }}</p><h1>Build #{{ run.build_number }}</h1><p class="muted">Updated {{ run.updated_at|date:"M d, Y H:i:s" }}</p></div><span class="badge large status-{{ run.status|lower }}">{{ run.get_status_display }}</span></section>
+<section class="hero compact"><div><p class="eyebrow">{{ run.job.name }}</p><h1>Build #{{ run.build_number }}</h1><p class="muted">Updated {{ run.updated_at|date:"M d, Y H:i:s" }}</p></div><div class="run-actions"><span class="badge large status-{{ run.status|lower }}">{{ run.get_status_display }}</span>{% if request.user.is_staff %}<form method="post" action="{% url 'run-delete' run.job.board.slug run.build_number %}" onsubmit="return confirm('Delete build #{{ run.build_number }} from the portal? This will not delete the Jenkins build or its Jenkins artifacts.');">{% csrf_token %}<button class="button danger" type="submit">Delete from portal</button></form>{% endif %}</div></section>
 <section class="run-suite-grid">
   {% for suite in suite_summaries %}
   <article class="panel run-suite-summary">
