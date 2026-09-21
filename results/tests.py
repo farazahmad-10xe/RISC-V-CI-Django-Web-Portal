@@ -46,6 +46,32 @@ class PortalTests(TestCase):
         self.assertContains(response, "1 passed · 0 failed · 1 executed")
         self.assertContains(response, "0 passed · 1 failed · 1 executed")
 
+    def test_run_detail_not_run_filter_includes_skipped_and_unknown(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-job")
+        run = TestRun.objects.create(job=job, build_number=3)
+        for name, status in (
+            ("PassedM-01", Status.PASS),
+            ("SkippedM-01", Status.SKIPPED),
+            ("MissingM-01", Status.UNKNOWN),
+        ):
+            test_case = ACTTestCase.objects.create(name=name, category="Privileged")
+            TestResult.objects.create(
+                run=run,
+                test_case=test_case,
+                hardware_status=status,
+            )
+
+        self.client.force_login(self.user)
+        response = self.client.get(
+            reverse("run-detail", args=["vf2", 3]),
+            {"status": "NOT_RUN"},
+        )
+        self.assertContains(response, "SkippedM-01")
+        self.assertContains(response, "MissingM-01")
+        self.assertNotContains(response, "PassedM-01")
+        self.assertContains(response, "Not Run (Skipped + Unknown)")
+
     @override_settings(PORTAL_INGEST_TOKEN="test-token")
     def test_ingest_creates_run_and_results(self):
         payload = {

@@ -102,7 +102,9 @@ def run_detail(request, slug, build_number):
     )
     status = request.GET.get("status", "").upper()
     query = request.GET.get("q", "").strip()
-    if status in Status.values:
+    if status == "NOT_RUN":
+        results = results.filter(hardware_status__in=[Status.SKIPPED, Status.UNKNOWN])
+    elif status in Status.values:
         results = results.filter(hardware_status=status)
     if query:
         results = results.filter(test_case__name__icontains=query)
@@ -112,7 +114,7 @@ def run_detail(request, slug, build_number):
             expected=Count("id"),
             completed=Count(
                 "id",
-                filter=Q(hardware_status__in=[Status.PASS, Status.FAIL, Status.SKIPPED]),
+                filter=Q(hardware_status__in=[Status.PASS, Status.FAIL]),
             ),
             passed=Count("id", filter=Q(hardware_status=Status.PASS)),
             failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
