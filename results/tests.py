@@ -5,10 +5,20 @@ import tempfile
 from pathlib import Path
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from .models import Artifact, Board, JenkinsJob, Status, TestResult, TestRun
+from .models import (
+    AnalysisColumn,
+    AnalysisValue,
+    Artifact,
+    Board,
+    JenkinsJob,
+    Status,
+    TestResult,
+    TestRun,
+)
 from .models import TestCase as ACTTestCase
 
 
@@ -116,6 +126,76 @@ class PortalTests(TestCase):
         self.assertFalse(TestRun.objects.filter(id=run.id).exists())
         self.assertFalse(TestResult.objects.filter(id=result.id).exists())
         self.assertFalse(Artifact.objects.filter(run_id=run.id).exists())
+
+    def test_workbook_execution_results_are_read_only_for_viewer(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-job")
+        run = TestRun.objects.create(job=job, build_number=8)
+        test_case = ACTTestCase.objects.create(
+            name="ExceptionsM-01", category="Privileged", extension="ExceptionsM"
+        )
+        TestResult.objects.create(
+            run=run,
+            test_case=test_case,
+            sail_status=Status.PASS,
+            spike_status=Status.PASS,
+            hardware_status=Status.FAIL,
+            failure_reason="hardware mismatch",
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("run-workbook", args=["vf2", 8]))
+
+        self.assertContains(response, "ExceptionsM-01")
+        self.assertContains(response, "hardware mismatch")
+        self.assertNotContains(response, "Add an analysis column")
+        denied = self.client.post(
+            reverse("analysis-column-add", args=["vf2", 8]),
+            {"name": "Owner"},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+    def test_authorized_user_can_add_and_save_analysis_column(self):
+        editor = get_user_model().objects.create_user(
+            "report-editor", password="safe-test-password"
+        )
+        editor.user_permissions.add(
+            Permission.objects.get(codename="manage_failure_analysis")
+        )
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-job")
+        run = TestRun.objects.create(job=job, build_number=9)
+        test_case = ACTTestCase.objects.create(
+            name="ExceptionsS-00", category="Privileged", extension="ExceptionsS"
+        )
+        result = TestResult.objects.create(
+            run=run,
+            test_case=test_case,
+            hardware_status=Status.FAIL,
+        )
+
+        self.client.force_login(editor)
+        created = self.client.post(
+            reverse("analysis-column-add", args=["vf2", 9]),
+            {"name": "Investigation notes"},
+        )
+        column = AnalysisColumn.objects.get(run=run)
+        self.assertRedirects(
+            created,
+            f'{reverse("run-workbook", args=["vf2", 9])}?edit={column.id}',
+        )
+
+        saved = self.client.post(
+            reverse("analysis-column-save", args=["vf2", 9, column.id]),
+            {f"analysis_{result.id}": "Needs trap-log review", "suite": "Privileged"},
+        )
+        self.assertEqual(saved.status_code, 302)
+        self.assertEqual(
+            AnalysisValue.objects.get(column=column, test_result=result).value,
+            "Needs trap-log review",
+        )
+        result.refresh_from_db()
+        self.assertEqual(result.hardware_status, Status.FAIL)
 
     @override_settings(PORTAL_INGEST_TOKEN="test-token")
     def test_ingest_creates_run_and_results(self):

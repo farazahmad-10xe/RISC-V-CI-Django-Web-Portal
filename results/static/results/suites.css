@@ -53,6 +53,37 @@
   color: var(--text);
 }
 
+.run-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -14px 0 16px;
+}
+
+.message-stack {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.message {
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(104, 167, 255, .08);
+}
+
+.message.success {
+  color: var(--green);
+  border-color: rgba(71, 209, 140, .35);
+  background: rgba(71, 209, 140, .08);
+}
+
+.message.error {
+  color: var(--red);
+  border-color: rgba(255, 107, 120, .35);
+  background: rgba(255, 107, 120, .08);
+}
+
 .danger-zone {
   display: flex;
   align-items: center;
@@ -143,6 +174,138 @@
   background: #ff8290;
 }
 
+.workbook-downloads,
+.analysis-controls,
+.analysis-controls form,
+.analysis-save-bar,
+.analysis-save-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workbook-downloads {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workbook-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.workbook-summary {
+  padding: 17px;
+}
+
+.workbook-summary strong,
+.workbook-summary span {
+  display: block;
+}
+
+.workbook-summary strong {
+  margin: 3px 0;
+  font-size: 28px;
+}
+
+.workbook-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workbook-tabs {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 16px;
+  padding: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(7, 17, 31, .45);
+}
+
+.workbook-tabs a {
+  padding: 8px 12px;
+  color: var(--muted);
+  border-radius: 8px;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.workbook-tabs a:hover,
+.workbook-tabs a.active {
+  color: var(--text);
+  background: var(--surface2);
+}
+
+.analysis-controls {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.analysis-controls h2 {
+  margin-top: 2px;
+}
+
+.analysis-controls p:last-child {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.analysis-controls form {
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.workbook-table th span,
+.column-edit {
+  display: block;
+}
+
+.column-edit {
+  margin-top: 4px;
+  color: var(--blue);
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.analysis-system-value,
+.analysis-value {
+  min-width: 220px;
+  max-width: 380px;
+  white-space: normal;
+}
+
+.analysis-value textarea {
+  width: 100%;
+  min-width: 210px;
+  resize: vertical;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #081524;
+  padding: 8px;
+  font: inherit;
+}
+
+.analysis-save-bar {
+  position: sticky;
+  bottom: 14px;
+  z-index: 5;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 13px 16px;
+  border: 1px solid rgba(53, 208, 186, .35);
+  border-radius: 12px;
+  background: rgba(13, 27, 44, .96);
+  box-shadow: var(--shadow);
+}
+
 .run-suite-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -191,7 +354,13 @@
 }
 
 @media (max-width: 900px) {
-  .run-suite-grid {
+  .run-suite-grid,
+  .workbook-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .analysis-save-bar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

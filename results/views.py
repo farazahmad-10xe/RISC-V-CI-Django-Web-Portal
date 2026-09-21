@@ -5,19 +5,33 @@ import json
 import re
 import secrets
 import shutil
+from collections import Counter
+from urllib.parse import quote
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .models import Artifact, Board, JenkinsJob, Status, TestCase, TestResult, TestRun
+from .models import (
+    AnalysisColumn,
+    AnalysisValue,
+    Artifact,
+    Board,
+    JenkinsJob,
+    Status,
+    TestCase,
+    TestResult,
+    TestRun,
+)
 
 
 @login_required
@@ -139,6 +153,165 @@ def run_detail(request, slug, build_number):
             "query": query,
         },
     )
+
+
+def _can_manage_analysis(user):
+    return user.is_staff or user.has_perm("results.manage_failure_analysis")
+
+
+@login_required
+def run_workbook(request, slug, build_number):
+    run = get_object_or_404(
+        TestRun.objects.select_related("job", "job__board"),
+        job__board__slug=slug,
+        build_number=build_number,
+    )
+    selected_suite = request.GET.get("suite", "All")
+    suites = ("All", "Privileged", "Non-Privileged", "Vector")
+    if selected_suite not in suites:
+        selected_suite = "All"
+
+    results = list(
+        run.test_results.select_related("test_case").prefetch_related("analysis_values")
+    )
+    summary = {}
+    for suite in suites:
+        suite_results = (
+            results
+            if suite == "All"
+            else [result for result in results if result.test_case.category == suite]
+        )
+        counts = Counter(result.hardware_status for result in suite_results)
+        executed = counts[Status.PASS] + counts[Status.FAIL]
+        summary[suite] = {
+            "total": len(suite_results),
+            "executed": executed,
+            "passed": counts[Status.PASS],
+            "failed": counts[Status.FAIL],
+            "not_run": len(suite_results) - executed,
+            "pass_percent": round(counts[Status.PASS] * 100 / executed, 1) if executed else 0,
+        }
+    if selected_suite != "All":
+        results = [
+            result for result in results if result.test_case.category == selected_suite
+        ]
+
+    columns = list(run.analysis_columns.all())
+    can_edit = _can_manage_analysis(request.user)
+    edit_column = None
+    if can_edit and request.GET.get("edit"):
+        try:
+            edit_column = next(
+                column for column in columns if column.id == int(request.GET["edit"])
+            )
+        except (ValueError, StopIteration):
+            edit_column = None
+
+    matrix_rows = []
+    for result in results:
+        stored = {value.column_id: value.value for value in result.analysis_values.all()}
+        matrix_rows.append(
+            {
+                "result": result,
+                "analysis": [
+                    {"column": column, "value": stored.get(column.id, "")}
+                    for column in columns
+                ],
+            }
+        )
+    workbook_artifact = run.artifacts.filter(name="test_status_matrix.xlsx").first()
+    summary_rows = [{"name": suite, **summary[suite]} for suite in suites]
+    return render(
+        request,
+        "results/run_workbook.html",
+        {
+            "run": run,
+            "matrix_rows": matrix_rows,
+            "columns": columns,
+            "can_edit": can_edit,
+            "edit_column": edit_column,
+            "selected_suite": selected_suite,
+            "suites": suites,
+            "summary_rows": summary_rows,
+            "workbook_artifact": workbook_artifact,
+        },
+    )
+
+
+@login_required
+@require_POST
+def add_analysis_column(request, slug, build_number):
+    if not _can_manage_analysis(request.user):
+        raise PermissionDenied("You cannot add failure-analysis columns")
+    run = get_object_or_404(
+        TestRun,
+        job__board__slug=slug,
+        build_number=build_number,
+    )
+    name = " ".join(request.POST.get("name", "").split())
+    if not name or len(name) > 80:
+        messages.error(request, "Column name must contain 1–80 characters.")
+        return redirect("run-workbook", slug=slug, build_number=build_number)
+    if run.analysis_columns.filter(name__iexact=name).exists():
+        messages.error(request, f'Analysis column "{name}" already exists.')
+        return redirect("run-workbook", slug=slug, build_number=build_number)
+    position = (run.analysis_columns.aggregate(value=Max("position"))["value"] or 0) + 1
+    column = AnalysisColumn.objects.create(
+        run=run,
+        name=name,
+        position=position,
+        created_by=request.user,
+    )
+    messages.success(request, f'Analysis column "{name}" was added.')
+    return redirect(
+        f'{reverse("run-workbook", args=[slug, build_number])}?edit={column.id}'
+    )
+
+
+@login_required
+@require_POST
+def save_analysis_column(request, slug, build_number, column_id):
+    if not _can_manage_analysis(request.user):
+        raise PermissionDenied("You cannot edit failure analysis")
+    run = get_object_or_404(
+        TestRun,
+        job__board__slug=slug,
+        build_number=build_number,
+    )
+    column = get_object_or_404(AnalysisColumn, id=column_id, run=run)
+    result_ids = []
+    submitted = {}
+    for key, value in request.POST.items():
+        if not key.startswith("analysis_"):
+            continue
+        try:
+            result_id = int(key.removeprefix("analysis_"))
+        except ValueError:
+            continue
+        result_ids.append(result_id)
+        submitted[result_id] = value.strip()[:4000]
+    valid_ids = set(
+        TestResult.objects.filter(run=run, id__in=result_ids).values_list("id", flat=True)
+    )
+    with transaction.atomic():
+        for result_id in valid_ids:
+            value = submitted[result_id]
+            if value:
+                AnalysisValue.objects.update_or_create(
+                    column=column,
+                    test_result_id=result_id,
+                    defaults={"value": value, "updated_by": request.user},
+                )
+            else:
+                AnalysisValue.objects.filter(
+                    column=column, test_result_id=result_id
+                ).delete()
+    messages.success(request, f'Analysis column "{column.name}" was saved.')
+    destination = reverse("run-workbook", args=[slug, build_number])
+    suite = request.POST.get("suite", "All")
+    if suite in {"Privileged", "Non-Privileged", "Vector"}:
+        destination += f"?suite={quote(suite)}"
+    return redirect(destination)
 
 
 @login_required

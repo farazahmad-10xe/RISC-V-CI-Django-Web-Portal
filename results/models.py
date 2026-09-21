@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.urls import reverse
 
@@ -148,3 +149,65 @@ class Artifact(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class AnalysisColumn(models.Model):
+    run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name="analysis_columns")
+    name = models.CharField(max_length=80)
+    position = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_analysis_columns",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "name"], name="unique_analysis_column_per_run"
+            )
+        ]
+        permissions = [
+            ("manage_failure_analysis", "Can manage build failure-analysis columns"),
+        ]
+
+    def __str__(self):
+        return f"{self.run}: {self.name}"
+
+
+class AnalysisValue(models.Model):
+    column = models.ForeignKey(
+        AnalysisColumn,
+        on_delete=models.CASCADE,
+        related_name="values",
+    )
+    test_result = models.ForeignKey(
+        TestResult,
+        on_delete=models.CASCADE,
+        related_name="analysis_values",
+    )
+    value = models.TextField(blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_analysis_values",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["column__position", "column_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["column", "test_result"],
+                name="unique_analysis_value_per_result",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.test_result}: {self.column.name}"

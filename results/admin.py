@@ -1,6 +1,15 @@
 from django.contrib import admin
 
-from .models import Artifact, Board, JenkinsJob, TestCase, TestResult, TestRun
+from .models import (
+    AnalysisColumn,
+    AnalysisValue,
+    Artifact,
+    Board,
+    JenkinsJob,
+    TestCase,
+    TestResult,
+    TestRun,
+)
 
 
 @admin.register(Board)
@@ -49,3 +58,15 @@ class TestResultAdmin(admin.ModelAdmin):
 class ArtifactAdmin(admin.ModelAdmin):
     list_display = ("name", "run", "kind", "size_bytes")
     search_fields = ("name", "relative_path", "external_url")
+
+
+@admin.register(AnalysisColumn)
+class AnalysisColumnAdmin(admin.ModelAdmin):
+    list_display = ("name", "run", "position", "created_by", "created_at")
+    search_fields = ("name", "run__job__name")
+
+
+@admin.register(AnalysisValue)
+class AnalysisValueAdmin(admin.ModelAdmin):
+    list_display = ("column", "test_result", "updated_by", "updated_at")
+    search_fields = ("column__name", "test_result__test_case__name", "value")

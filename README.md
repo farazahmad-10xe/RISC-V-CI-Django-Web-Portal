@@ -109,6 +109,17 @@ Use `--suite-inventory-xlsx` with a validated prior report to preserve the compl
 suite when a current run stops early or does not generate a workbook. Tests absent from the
 current run are published as `UNKNOWN` and counted as not run; they are never treated as passes.
 
+## Workbook view and failure analysis
+
+Each run has a workbook-style web view. Sail, Spike, hardware status, test identity, and the
+runner-provided failure reason are read-only. Users with the
+`results.manage_failure_analysis` permission may add per-build analysis columns and save text
+against individual tests. Analysis values live in PostgreSQL and never rewrite the immutable
+Jenkins workbook or certification result.
+
+Grant the permission through Django Admin by creating a `Report Editors` group and selecting
+`Can manage build failure-analysis columns`. Staff and superusers have access automatically.
+
 ## Apollo production layout
 
 ```text
