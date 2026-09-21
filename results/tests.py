@@ -53,11 +53,27 @@ class PortalTests(TestCase):
             "status": "RUNNING",
             "expected_cases": 485,
             "completed_cases": 6,
+            "git_revision": "runner123",
+            "act_revision": "act456",
+            "metadata": {"sail_version": "0.14"},
             "results": [
                 {
                     "name": "ExceptionsM-01",
                     "category": "Privileged",
                     "hardware_status": "PASS",
+                    "log_path": "https://jenkins/artifact/uart.log",
+                },
+                {
+                    "name": "I-add-01",
+                    "category": "Non-Privileged",
+                    "hardware_status": "PASS",
+                }
+            ],
+            "artifacts": [
+                {
+                    "name": "summary.md",
+                    "relative_path": "/agent/results/summary.md",
+                    "external_url": "https://jenkins/artifact/summary.md",
                 }
             ],
         }
@@ -69,7 +85,17 @@ class PortalTests(TestCase):
         )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(TestRun.objects.get().expected_cases, 485)
-        self.assertEqual(TestRun.objects.get().test_results.count(), 1)
+        self.assertEqual(TestRun.objects.get().test_results.count(), 2)
+
+        self.client.force_login(self.user)
+        detail = self.client.get(reverse("run-detail", args=["vf2", 3]))
+        self.assertContains(detail, "Sail version")
+        self.assertContains(detail, "0.14")
+        self.assertContains(detail, "runner123")
+        self.assertContains(detail, "ExceptionsM-01")
+        self.assertNotContains(detail, "I-add-01")
+        self.assertContains(detail, "https://jenkins/artifact/uart.log")
+        self.assertContains(detail, "https://jenkins/artifact/summary.md")
 
         payload["completed_cases"] = 7
         response = self.client.post(

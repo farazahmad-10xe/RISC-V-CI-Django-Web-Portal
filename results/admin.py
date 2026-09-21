@@ -48,4 +48,4 @@ class TestResultAdmin(admin.ModelAdmin):
 @admin.register(Artifact)
 class ArtifactAdmin(admin.ModelAdmin):
     list_display = ("name", "run", "kind", "size_bytes")
-    search_fields = ("name", "relative_path")
+    search_fields = ("name", "relative_path", "external_url")

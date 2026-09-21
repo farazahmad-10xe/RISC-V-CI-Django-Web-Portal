@@ -27,6 +27,7 @@
     </div>
     <p>{{ board.core_profile|default:"Core profile not recorded" }}</p>
     {% if board.latest_run %}
+    <div class="run-provenance"><span>Sail <b>{{ board.latest_run.metadata.sail_version|default:"—" }}</b></span><span>Runner <code>{{ board.latest_run.git_revision|truncatechars:13|default:"—" }}</code></span><span>ACT <code>{{ board.latest_run.act_revision|truncatechars:13|default:"—" }}</code></span></div>
     <div class="progress-label"><span>Build #{{ board.latest_run.build_number }}</span><span>{{ board.latest_run.completed_cases }} / {{ board.latest_run.expected_cases }}</span></div>
     <div class="progress"><span style="width: {{ board.latest_run.progress_percent }}%"></span></div>
     <div class="board-metrics"><span><b>{{ board.latest_run.pass_percent }}%</b> pass rate</span><span><b>{{ board.latest_run.failed_cases }}</b> failed</span></div>

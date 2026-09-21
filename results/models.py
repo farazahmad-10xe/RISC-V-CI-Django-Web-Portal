@@ -122,11 +122,16 @@ class TestResult(models.Model):
     def __str__(self):
         return f"{self.run}: {self.test_case.name}"
 
+    @property
+    def log_url(self):
+        return self.log_path if self.log_path.startswith(("http://", "https://")) else ""
+
 
 class Artifact(models.Model):
     run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name="artifacts")
     name = models.CharField(max_length=200)
     relative_path = models.CharField(max_length=500)
+    external_url = models.URLField(max_length=1000, blank=True)
     kind = models.CharField(max_length=40, blank=True)
     size_bytes = models.PositiveBigIntegerField(default=0)
     sha256 = models.CharField(max_length=64, blank=True)

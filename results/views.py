@@ -71,7 +71,11 @@ def dashboard(request):
 @login_required
 def board_detail(request, slug):
     board = get_object_or_404(Board, slug=slug)
-    runs = TestRun.objects.filter(job__board=board).select_related("job")
+    runs = (
+        TestRun.objects.filter(job__board=board)
+        .select_related("job")
+        .order_by("-updated_at", "-id")
+    )
     status = request.GET.get("status", "").upper()
     if status in Status.values:
         runs = runs.filter(status=status)
@@ -89,21 +93,29 @@ def run_detail(request, slug, build_number):
         job__board__slug=slug,
         build_number=build_number,
     )
-    results = run.test_results.select_related("test_case")
+    results = run.test_results.select_related("test_case").filter(
+        test_case__category="Privileged"
+    )
     status = request.GET.get("status", "").upper()
-    category = request.GET.get("category", "")
     query = request.GET.get("q", "").strip()
     if status in Status.values:
         results = results.filter(hardware_status=status)
-    if category:
-        results = results.filter(test_case__category=category)
     if query:
         results = results.filter(test_case__name__icontains=query)
-    categories = (
-        run.test_results.exclude(test_case__category="")
-        .values_list("test_case__category", flat=True)
-        .distinct()
-        .order_by("test_case__category")
+    privileged_summary = run.test_results.filter(
+        test_case__category="Privileged"
+    ).aggregate(
+        expected=Count("id"),
+        completed=Count(
+            "id",
+            filter=Q(hardware_status__in=[Status.PASS, Status.FAIL, Status.SKIPPED]),
+        ),
+        passed=Count("id", filter=Q(hardware_status=Status.PASS)),
+        failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
+    )
+    decided = privileged_summary["passed"] + privileged_summary["failed"]
+    privileged_summary["pass_percent"] = (
+        round(privileged_summary["passed"] * 100 / decided, 1) if decided else 0
     )
     return render(
         request,
@@ -111,9 +123,8 @@ def run_detail(request, slug, build_number):
         {
             "run": run,
             "results": results[:2000],
-            "categories": categories,
+            "privileged_summary": privileged_summary,
             "selected_status": status,
-            "selected_category": category,
             "query": query,
         },
     )
@@ -214,6 +225,7 @@ def ingest_run(request):
                 name=item["name"],
                 defaults={
                     "relative_path": item["relative_path"],
+                    "external_url": item.get("external_url", ""),
                     "kind": item.get("kind", ""),
                     "size_bytes": int(item.get("size_bytes", 0)),
                     "sha256": item.get("sha256", ""),

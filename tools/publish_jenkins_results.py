@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
+import shutil
 import ssl
 import sys
 from collections import Counter
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
@@ -60,6 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--portal-url", default="https://192.168.100.150/portal/")
     parser.add_argument("--token", default=os.getenv("PORTAL_INGEST_TOKEN", ""))
     parser.add_argument("--ca-file", type=Path)
+    parser.add_argument(
+        "--artifact-store",
+        type=Path,
+        help="Optional permanent directory on the agent for compact report artifacts",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--no-post", action="store_true")
     return parser.parse_args()
@@ -198,13 +206,110 @@ def extension_for(name: str) -> str:
     return re.sub(r"-\d+$", "", name)
 
 
+def workspace_root_for(state_root: Path, run_root: Path) -> Path | None:
+    for candidate in state_root.parents:
+        try:
+            state_root.relative_to(candidate / "logs")
+            run_root.relative_to(candidate / "logs")
+            return candidate
+        except ValueError:
+            continue
+    return None
+
+
+def jenkins_artifact_url(build_url: str, relative_path: Path) -> str:
+    encoded = "/".join(quote(part, safe="") for part in relative_path.parts)
+    return f"{build_url.rstrip('/')}/artifact/{encoded}" if build_url else ""
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def collect_artifacts(
+    args: argparse.Namespace,
+    state_root: Path,
+    run_root: Path,
+    run_id: str,
+) -> list[dict]:
+    workspace = workspace_root_for(state_root, run_root)
+    candidates = [
+        (state_root / "test_status_matrix.xlsx", "excel"),
+        (state_root / "tracking_sheet_comparison.csv", "comparison"),
+        (state_root / "site" / "downloads" / f"{run_id}-complete.zip", "archive"),
+        (run_root / "summary.md", "summary"),
+        (run_root / "cases.csv", "results"),
+        (run_root / "cases.json", "results"),
+        (run_root / "uart_capture.log", "uart"),
+    ]
+    destination_root = None
+    artifact_store = getattr(args, "artifact_store", None)
+    if artifact_store:
+        safe_job = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.job_name)
+        destination_root = artifact_store.resolve() / safe_job / str(args.build_number)
+        destination_root.mkdir(parents=True, exist_ok=True)
+
+    artifacts = []
+    for source, kind in candidates:
+        if not source.is_file():
+            continue
+        stored_path = ""
+        if destination_root:
+            destination = destination_root / source.name
+            shutil.copy2(source, destination)
+            stored_path = str(destination)
+        relative = None
+        if workspace:
+            try:
+                relative = source.relative_to(workspace)
+            except ValueError:
+                pass
+        artifacts.append(
+            {
+                "name": source.name,
+                "relative_path": stored_path or str(relative or source.name),
+                "external_url": (
+                    jenkins_artifact_url(args.build_url, relative) if relative else ""
+                ),
+                "kind": kind,
+                "size_bytes": source.stat().st_size,
+                "sha256": sha256(source),
+            }
+        )
+    return artifacts
+
+
+def retain_case_uart_logs(args: argparse.Namespace, run_root: Path, cases: dict[str, dict]):
+    artifact_store = getattr(args, "artifact_store", None)
+    if not artifact_store:
+        return
+    safe_job = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.job_name)
+    destination_root = (
+        artifact_store.resolve() / safe_job / str(args.build_number) / "per_case"
+    )
+    for name in cases:
+        source = run_root / "per_case" / name / "uart.log"
+        if not source.is_file():
+            continue
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
+        destination = destination_root / safe_name / "uart.log"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+
 def build_payload(args: argparse.Namespace) -> dict:
     state_root = args.state_root.resolve()
     run_root = args.run_root.resolve()
     state = read_state(state_root / "state.env")
+    manifest = read_state(state_root / "jenkins_manifest.txt")
     sail = read_status_tsv(state_root / "sail_reference_status.tsv")
     spike = read_status_tsv(state_root / "spike_status.tsv")
     cases = read_cases(run_root / "cases.json")
+    retain_case_uart_logs(args, run_root, cases)
     artifact_root = state.get("ARTIFACT_ROOT", "")
     artifact_categories = read_artifact_categories(Path(artifact_root)) if artifact_root else {}
     categories = {
@@ -212,6 +317,7 @@ def build_payload(args: argparse.Namespace) -> dict:
         **read_xlsx_categories(state_root / "test_status_matrix.xlsx"),
     }
     names = sorted(set(sail) | set(spike) | set(cases), key=str.casefold)
+    run_id = state.get("RUN_ID", run_root.name)
 
     results = []
     hardware_counts: Counter[str] = Counter()
@@ -231,7 +337,10 @@ def build_payload(args: argparse.Namespace) -> dict:
                 "failure_reason": (
                     str(case.get("root_cause", "")) if hardware_status == "FAIL" else ""
                 ),
-                "log_path": str(case.get("report", "")),
+                "log_path": jenkins_artifact_url(
+                    args.build_url,
+                    Path("logs") / "runs" / run_id / "per_case" / name / "uart.log",
+                ),
             }
         )
 
@@ -265,19 +374,27 @@ def build_payload(args: argparse.Namespace) -> dict:
         "passed_cases": hardware_counts["PASS"],
         "failed_cases": hardware_counts["FAIL"],
         "skipped_cases": hardware_counts["SKIPPED"],
+        "git_revision": manifest.get("git_head", ""),
         "act_revision": state.get("ACT_REVISION", ""),
         "parameters": {"test_scope": state.get("TEST_SCOPE", "")},
         "metadata": {
-            "run_id": state.get("RUN_ID", run_root.name),
+            "run_id": run_id,
             "run_kind": state.get("RUN_KIND", ""),
             "build_url": args.build_url,
+            "sail_version": manifest.get("sail_version", ""),
+            "persistent_agent_root": str(args.artifact_store.resolve())
+            if getattr(args, "artifact_store", None)
+            else "",
         },
         "results": results,
+        "artifacts": collect_artifacts(args, state_root, run_root, run_id),
     }
     if args.started_at:
         payload["started_at"] = args.started_at
     if args.finished_at:
         payload["finished_at"] = args.finished_at
+    elif manifest.get("completed_utc"):
+        payload["finished_at"] = manifest["completed_utc"]
     return payload
 
 

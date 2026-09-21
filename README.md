@@ -98,6 +98,11 @@ hardware agent. Do not read the token from a workspace file or place it in job X
 
 Use `--no-post --output payload.json` to validate a job's mapping without changing the portal.
 
+Pass `--artifact-store /home/lpt-10xe/jenkins-hardware-staging/portal-results` to retain
+the compact run artifacts and each test's UART log in a build-numbered permanent directory
+on the hardware agent. Portal download links use the Jenkins archived copies, so users can
+open them through the existing authenticated Jenkins HTTPS endpoint.
+
 ## Apollo production layout
 
 ```text

@@ -40,6 +40,19 @@
   line-height: 1.35;
 }
 
+.run-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-provenance b,
+.run-provenance code {
+  color: var(--text);
+}
+
 @media (max-width: 520px) {
   .suite-grid {
     grid-template-columns: 1fr;
