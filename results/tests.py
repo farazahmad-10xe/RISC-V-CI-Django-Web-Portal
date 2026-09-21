@@ -105,6 +105,8 @@ class PortalTests(TestCase):
             self.client.force_login(staff)
             detail = self.client.get(reverse("run-detail", args=["vf2", 4]))
             self.assertContains(detail, "Delete from portal")
+            self.assertContains(detail, "Cancel")
+            self.assertContains(detail, "OK, delete")
             with override_settings(PORTAL_ARTIFACT_ROOT=artifact_root):
                 response = self.client.post(reverse("run-delete", args=["vf2", 4]))
 
