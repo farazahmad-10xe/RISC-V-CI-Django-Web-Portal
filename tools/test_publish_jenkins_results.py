@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 from zipfile import ZipFile
 
-from tools.publish_jenkins_results import build_payload, normalize_status, read_xlsx_categories
+from tools.publish_jenkins_results import (
+    build_payload,
+    normalize_status,
+    read_artifact_categories,
+    read_xlsx_categories,
+)
 
 
 class PublisherTests(unittest.TestCase):
@@ -95,6 +100,30 @@ class PublisherTests(unittest.TestCase):
 
         self.assertEqual(categories["ExceptionsM-01"], "Privileged")
         self.assertEqual(categories["I-add-01"], "Non-Privileged")
+
+    def test_reads_suite_membership_from_act_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifacts = {
+                "priv/ExceptionsM/ExceptionsM-01.sig.elf": "Privileged",
+                "rv64i/I/I-add-01.sig.elf": "Non-Privileged",
+                "rv64v/V/V-add-01.sig.elf": "Vector",
+            }
+            for relative_path in artifacts:
+                path = root / relative_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+
+            categories = read_artifact_categories(root)
+
+        self.assertEqual(
+            categories,
+            {
+                "ExceptionsM-01": "Privileged",
+                "I-add-01": "Non-Privileged",
+                "V-add-01": "Vector",
+            },
+        )
 
 
 if __name__ == "__main__":

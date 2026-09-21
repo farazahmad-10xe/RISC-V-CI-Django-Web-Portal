@@ -171,6 +171,29 @@ def read_xlsx_categories(path: Path) -> dict[str, str]:
     return categories
 
 
+def read_artifact_categories(path: Path) -> dict[str, str]:
+    """Infer suite membership from ACT's build/<suite>/<extension> layout."""
+    if not path.is_dir():
+        return {}
+    categories: dict[str, str] = {}
+    for artifact in path.rglob("*.sig.elf"):
+        try:
+            relative = artifact.relative_to(path)
+        except ValueError:
+            continue
+        if not relative.parts:
+            continue
+        suite = relative.parts[0].lower()
+        if suite == "priv":
+            category = "Privileged"
+        elif suite in {"rv32v", "rv64v", "vector"} or suite.endswith("v"):
+            category = "Vector"
+        else:
+            category = "Non-Privileged"
+        categories[artifact.name.removesuffix(".sig.elf")] = category
+    return categories
+
+
 def extension_for(name: str) -> str:
     return re.sub(r"-\d+$", "", name)
 
@@ -182,7 +205,12 @@ def build_payload(args: argparse.Namespace) -> dict:
     sail = read_status_tsv(state_root / "sail_reference_status.tsv")
     spike = read_status_tsv(state_root / "spike_status.tsv")
     cases = read_cases(run_root / "cases.json")
-    categories = read_xlsx_categories(state_root / "test_status_matrix.xlsx")
+    artifact_root = state.get("ARTIFACT_ROOT", "")
+    artifact_categories = read_artifact_categories(Path(artifact_root)) if artifact_root else {}
+    categories = {
+        **artifact_categories,
+        **read_xlsx_categories(state_root / "test_status_matrix.xlsx"),
+    }
     names = sorted(set(sail) | set(spike) | set(cases), key=str.casefold)
 
     results = []
