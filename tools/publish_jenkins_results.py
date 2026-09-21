@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
+import gzip
 import hashlib
 import json
 import os
@@ -63,6 +65,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--portal-url", default="https://192.168.100.150/portal/")
     parser.add_argument("--token", default=os.getenv("PORTAL_INGEST_TOKEN", ""))
     parser.add_argument("--ca-file", type=Path)
+    parser.add_argument(
+        "--suite-inventory-xlsx",
+        type=Path,
+        help="Optional baseline workbook whose suite tabs define the expected test inventory",
+    )
     parser.add_argument(
         "--artifact-store",
         type=Path,
@@ -312,37 +319,52 @@ def build_payload(args: argparse.Namespace) -> dict:
     retain_case_uart_logs(args, run_root, cases)
     artifact_root = state.get("ARTIFACT_ROOT", "")
     artifact_categories = read_artifact_categories(Path(artifact_root)) if artifact_root else {}
+    inventory_categories = (
+        read_xlsx_categories(args.suite_inventory_xlsx.resolve())
+        if getattr(args, "suite_inventory_xlsx", None)
+        else {}
+    )
     categories = {
+        **inventory_categories,
         **artifact_categories,
         **read_xlsx_categories(state_root / "test_status_matrix.xlsx"),
     }
-    names = sorted(set(sail) | set(spike) | set(cases), key=str.casefold)
+    names = sorted(set(sail) | set(spike) | set(cases) | set(categories), key=str.casefold)
     run_id = state.get("RUN_ID", run_root.name)
 
     results = []
     hardware_counts: Counter[str] = Counter()
     for name in names:
         case = cases.get(name, {})
+        category = categories.get(name, "")
+        uart_path = run_root / "per_case" / name / "uart.log"
         hardware_status = normalize_status(case.get("status"))
         if name in cases:
             hardware_counts[hardware_status] += 1
-        results.append(
-            {
-                "name": name,
-                "category": categories.get(name, ""),
-                "extension": extension_for(name),
-                "sail_status": sail.get(name, normalize_status(case.get("sail_status"))),
-                "spike_status": spike.get(name, "UNKNOWN"),
-                "hardware_status": hardware_status,
-                "failure_reason": (
-                    str(case.get("root_cause", "")) if hardware_status == "FAIL" else ""
-                ),
-                "log_path": jenkins_artifact_url(
+        result = {
+            "name": name,
+            "category": category,
+            "extension": extension_for(name),
+            "sail_status": sail.get(name, normalize_status(case.get("sail_status"))),
+            "spike_status": spike.get(name, "UNKNOWN"),
+            "hardware_status": hardware_status,
+            "failure_reason": (
+                str(case.get("root_cause", "")) if hardware_status == "FAIL" else ""
+            ),
+            "log_path": (
+                jenkins_artifact_url(
                     args.build_url,
                     Path("logs") / "runs" / run_id / "per_case" / name / "uart.log",
-                ),
-            }
-        )
+                )
+                if uart_path.is_file()
+                else ""
+            ),
+        }
+        if category == "Privileged" and uart_path.is_file():
+            result["uart_log_gzip_b64"] = base64.b64encode(
+                gzip.compress(uart_path.read_bytes())
+            ).decode("ascii")
+        results.append(result)
 
     expected = int(state.get("EXPECTED_CASES", "0") or 0)
     completed = len(cases)

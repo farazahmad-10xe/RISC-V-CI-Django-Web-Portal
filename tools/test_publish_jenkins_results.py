@@ -1,4 +1,6 @@
 import argparse
+import base64
+import gzip
 import json
 import tempfile
 import unittest
@@ -13,6 +15,42 @@ from tools.publish_jenkins_results import (
 )
 
 
+def write_inventory_workbook(path, privileged, non_privileged=()):
+    workbook_xml = """<?xml version="1.0"?>
+    <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+      xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <sheets>
+        <sheet name="Privileged Tests" sheetId="1" r:id="rId1"/>
+        <sheet name="Non-Privileged Tests" sheetId="2" r:id="rId2"/>
+      </sheets>
+    </workbook>"""
+    relationships_xml = """<?xml version="1.0"?>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
+      <Relationship Id="rId2" Target="worksheets/sheet2.xml"/>
+    </Relationships>"""
+
+    def sheet_xml(test_names):
+        rows = [
+            '<row r="1"><c r="A1" t="inlineStr"><is><t>Test Name</t></is></c></row>'
+        ]
+        rows.extend(
+            f'<row r="{number}"><c r="A{number}" t="inlineStr"><is><t>{name}</t></is></c></row>'
+            for number, name in enumerate(test_names, 2)
+        )
+        return (
+            '<?xml version="1.0"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f"<sheetData>{''.join(rows)}</sheetData></worksheet>"
+        )
+
+    with ZipFile(path, "w") as archive:
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", relationships_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml(privileged))
+        archive.writestr("xl/worksheets/sheet2.xml", sheet_xml(non_privileged))
+
+
 class PublisherTests(unittest.TestCase):
     def test_status_aliases(self):
         self.assertEqual(normalize_status("SUCCESS"), "PASS")
@@ -24,10 +62,12 @@ class PublisherTests(unittest.TestCase):
             root = Path(temporary)
             state_root = root / "state"
             run_root = root / "run"
+            artifact_root = root / "artifacts"
             state_root.mkdir()
             run_root.mkdir()
             (state_root / "state.env").write_text(
                 "RUN_ID=jenkins_weekly_7\nEXPECTED_CASES=2\nACT_REVISION=abc123\n"
+                f"ARTIFACT_ROOT={artifact_root}\n"
             )
             (state_root / "sail_reference_status.tsv").write_text(
                 "test_name\tsail_status\thardware_elf\nExceptionsM-01\tPASS\tyes\n"
@@ -45,6 +85,18 @@ class PublisherTests(unittest.TestCase):
                     ]
                 )
             )
+            uart_path = run_root / "per_case" / "ExceptionsM-01" / "uart.log"
+            uart_path.parent.mkdir(parents=True)
+            uart_path.write_bytes(b"UART output\n")
+            elf_path = artifact_root / "priv" / "ExceptionsM" / "ExceptionsM-01.sig.elf"
+            elf_path.parent.mkdir(parents=True)
+            elf_path.touch()
+            inventory_path = root / "inventory.xlsx"
+            write_inventory_workbook(
+                inventory_path,
+                ["ExceptionsM-01", "InterruptsM-01"],
+                ["I-add-01"],
+            )
             args = argparse.Namespace(
                 state_root=state_root,
                 run_root=run_root,
@@ -57,6 +109,7 @@ class PublisherTests(unittest.TestCase):
                 status="AUTO",
                 started_at="",
                 finished_at="",
+                suite_inventory_xlsx=inventory_path,
             )
             payload = build_payload(args)
         self.assertEqual(payload["status"], "RUNNING")
@@ -64,38 +117,20 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["sail_status"], "PASS")
         self.assertEqual(payload["results"][0]["spike_status"], "PASS")
         self.assertEqual(payload["results"][0]["hardware_status"], "FAIL")
+        self.assertEqual(payload["results"][0]["category"], "Privileged")
+        self.assertEqual(
+            gzip.decompress(base64.b64decode(payload["results"][0]["uart_log_gzip_b64"])),
+            b"UART output\n",
+        )
+        by_name = {item["name"]: item for item in payload["results"]}
+        self.assertEqual(by_name["InterruptsM-01"]["hardware_status"], "UNKNOWN")
+        self.assertEqual(by_name["InterruptsM-01"]["category"], "Privileged")
+        self.assertEqual(by_name["I-add-01"]["category"], "Non-Privileged")
 
     def test_reads_suite_membership_from_status_workbook(self):
-        workbook_xml = """<?xml version="1.0"?>
-        <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-          <sheets>
-            <sheet name="Privileged Tests" sheetId="1" r:id="rId1"/>
-            <sheet name="Non-Privileged Tests" sheetId="2" r:id="rId2"/>
-          </sheets>
-        </workbook>"""
-        relationships_xml = """<?xml version="1.0"?>
-        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-          <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
-          <Relationship Id="rId2" Target="worksheets/sheet2.xml"/>
-        </Relationships>"""
-
-        def sheet_xml(test_name):
-            return f"""<?xml version="1.0"?>
-            <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-              <sheetData>
-                <row r="1"><c r="A1" t="inlineStr"><is><t>Test Name</t></is></c></row>
-                <row r="2"><c r="A2" t="inlineStr"><is><t>{test_name}</t></is></c></row>
-              </sheetData>
-            </worksheet>"""
-
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary, "matrix.xlsx")
-            with ZipFile(path, "w") as archive:
-                archive.writestr("xl/workbook.xml", workbook_xml)
-                archive.writestr("xl/_rels/workbook.xml.rels", relationships_xml)
-                archive.writestr("xl/worksheets/sheet1.xml", sheet_xml("ExceptionsM-01"))
-                archive.writestr("xl/worksheets/sheet2.xml", sheet_xml("I-add-01"))
+            write_inventory_workbook(path, ["ExceptionsM-01"], ["I-add-01"])
             categories = read_xlsx_categories(path)
 
         self.assertEqual(categories["ExceptionsM-01"], "Privileged")

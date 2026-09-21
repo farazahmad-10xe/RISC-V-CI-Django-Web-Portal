@@ -67,6 +67,7 @@ Files are stored below `PORTAL_ARTIFACT_ROOT`; only their metadata and relative 
 - `state.env` for run identity and expected count
 - `sail_reference_status.tsv` and `spike_status.tsv` for model results
 - `cases.json` for hardware PASS/FAIL and failure details
+- an optional reference workbook for the full expected suite inventory
 
 It merges them into one idempotent API update. Store the ingest token in Jenkins as a
 Secret Text credential named `riscv-portal-ingest-token`, then call the publisher from a
@@ -86,6 +87,7 @@ script {
         --build-number "$BUILD_NUMBER" \
         --build-url "$BUILD_URL" \
         --status "$PORTAL_BUILD_RESULT" \
+        --suite-inventory-xlsx /home/lpt-10xe/jenkins-agent/reference/vf2-suite-inventory.xlsx \
         --portal-url https://192.168.100.150/portal/ \
         --ca-file /etc/ssl/certs/jenkins-internal-ca.crt'''
     }
@@ -100,8 +102,12 @@ Use `--no-post --output payload.json` to validate a job's mapping without changi
 
 Pass `--artifact-store /home/lpt-10xe/jenkins-hardware-staging/portal-results` to retain
 the compact run artifacts and each test's UART log in a build-numbered permanent directory
-on the hardware agent. Portal download links use the Jenkins archived copies, so users can
-open them through the existing authenticated Jenkins HTTPS endpoint.
+on the hardware agent. Privileged per-test UART logs are also gzip-compressed during upload,
+stored below `PORTAL_ARTIFACT_ROOT` on Apollo, and served through authenticated portal links.
+
+Use `--suite-inventory-xlsx` with a validated prior report to preserve the complete expected
+suite when a current run stops early or does not generate a workbook. Tests absent from the
+current run are published as `UNKNOWN` and counted as not run; they are never treated as passes.
 
 ## Apollo production layout
 

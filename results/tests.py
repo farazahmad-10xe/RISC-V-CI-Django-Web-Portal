@@ -1,3 +1,5 @@
+import base64
+import gzip
 import json
 import tempfile
 from pathlib import Path
@@ -121,3 +123,43 @@ class PortalTests(TestCase):
             with override_settings(PORTAL_ARTIFACT_ROOT=root.resolve()):
                 response = self.client.get(reverse("artifact-download", args=[artifact.id]))
         self.assertEqual(response.status_code, 404)
+
+    @override_settings(PORTAL_INGEST_TOKEN="test-token")
+    def test_ingested_uart_log_is_served_by_authenticated_portal(self):
+        uart_content = b"Booting VF2\nPASS ExceptionsM-01\n"
+        payload = {
+            "board": {"slug": "vf2", "name": "VisionFive 2"},
+            "job": {"name": "vf2-privileged-weekly"},
+            "build_number": 3,
+            "results": [
+                {
+                    "name": "ExceptionsM-01",
+                    "category": "Privileged",
+                    "hardware_status": "PASS",
+                    "uart_log_gzip_b64": base64.b64encode(
+                        gzip.compress(uart_content)
+                    ).decode("ascii"),
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact_root = Path(temporary).resolve()
+            with override_settings(PORTAL_ARTIFACT_ROOT=artifact_root):
+                response = self.client.post(
+                    reverse("api-ingest-run"),
+                    data=json.dumps(payload),
+                    content_type="application/json",
+                    headers={"X-Portal-Token": "test-token"},
+                )
+                self.assertEqual(response.status_code, 201)
+                result = TestResult.objects.get()
+                self.assertTrue(result.log_path.startswith("uart/vf2/"))
+
+                anonymous = self.client.get(reverse("test-uart-download", args=[result.id]))
+                self.assertEqual(anonymous.status_code, 302)
+                self.client.force_login(self.user)
+                downloaded = self.client.get(
+                    reverse("test-uart-download", args=[result.id])
+                )
+                self.assertEqual(downloaded.status_code, 200)
+                self.assertEqual(b"".join(downloaded.streaming_content), uart_content)

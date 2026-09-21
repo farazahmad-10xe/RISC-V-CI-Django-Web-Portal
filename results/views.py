@@ -1,4 +1,8 @@
+import base64
+import binascii
+import gzip
 import json
+import re
 import secrets
 
 from django.conf import settings
@@ -102,28 +106,31 @@ def run_detail(request, slug, build_number):
         results = results.filter(hardware_status=status)
     if query:
         results = results.filter(test_case__name__icontains=query)
-    privileged_summary = run.test_results.filter(
-        test_case__category="Privileged"
-    ).aggregate(
-        expected=Count("id"),
-        completed=Count(
-            "id",
-            filter=Q(hardware_status__in=[Status.PASS, Status.FAIL, Status.SKIPPED]),
-        ),
-        passed=Count("id", filter=Q(hardware_status=Status.PASS)),
-        failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
-    )
-    decided = privileged_summary["passed"] + privileged_summary["failed"]
-    privileged_summary["pass_percent"] = (
-        round(privileged_summary["passed"] * 100 / decided, 1) if decided else 0
-    )
+    suite_summaries = []
+    for category in ("Privileged", "Non-Privileged"):
+        summary = run.test_results.filter(test_case__category=category).aggregate(
+            expected=Count("id"),
+            completed=Count(
+                "id",
+                filter=Q(hardware_status__in=[Status.PASS, Status.FAIL, Status.SKIPPED]),
+            ),
+            passed=Count("id", filter=Q(hardware_status=Status.PASS)),
+            failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
+        )
+        decided = summary["passed"] + summary["failed"]
+        summary.update(
+            name=category,
+            not_run=summary["expected"] - summary["completed"],
+            pass_percent=round(summary["passed"] * 100 / decided, 1) if decided else 0,
+        )
+        suite_summaries.append(summary)
     return render(
         request,
         "results/run_detail.html",
         {
             "run": run,
             "results": results[:2000],
-            "privileged_summary": privileged_summary,
+            "suite_summaries": suite_summaries,
             "selected_status": status,
             "query": query,
         },
@@ -142,6 +149,53 @@ def artifact_download(request, artifact_id):
     if not candidate.is_file():
         raise Http404("Artifact is not available")
     return FileResponse(candidate.open("rb"), as_attachment=True, filename=artifact.name)
+
+
+@login_required
+def test_uart_download(request, result_id):
+    result = get_object_or_404(TestResult.objects.select_related("test_case"), id=result_id)
+    if not result.log_path or result.log_path.startswith(("http://", "https://")):
+        raise Http404("UART log is not stored by the portal")
+    root = settings.PORTAL_ARTIFACT_ROOT
+    candidate = (root / result.log_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise Http404("Invalid UART log path") from exc
+    if not candidate.is_file():
+        raise Http404("UART log is not available")
+    return FileResponse(
+        candidate.open("rb"),
+        as_attachment=False,
+        filename=f"{result.test_case.name}-uart.log",
+        content_type="text/plain",
+    )
+
+
+def _safe_component(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._") or "unnamed"
+
+
+def _store_uart_log(board_slug, job_name, build_number, test_name, encoded):
+    try:
+        compressed = base64.b64decode(encoded, validate=True)
+        content = gzip.decompress(compressed)
+    except (binascii.Error, gzip.BadGzipFile, OSError, ValueError, TypeError) as exc:
+        raise ValueError("invalid UART log encoding") from exc
+    if len(content) > 2 * 1024 * 1024:
+        raise ValueError("UART log exceeds the 2 MiB per-test limit")
+    relative = (
+        "uart"
+        f"/{_safe_component(board_slug)}"
+        f"/{_safe_component(job_name)}"
+        f"/{int(build_number)}"
+        f"/{_safe_component(test_name)}.log"
+    )
+    destination = (settings.PORTAL_ARTIFACT_ROOT / relative).resolve()
+    destination.relative_to(settings.PORTAL_ARTIFACT_ROOT)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(content)
+    return relative
 
 
 def _authorized(request):
@@ -207,6 +261,18 @@ def ingest_run(request):
                     "extension": item.get("extension", ""),
                 },
             )
+            log_path = item.get("log_path", "")
+            if item.get("uart_log_gzip_b64"):
+                try:
+                    log_path = _store_uart_log(
+                        board.slug,
+                        job.name,
+                        build_number,
+                        item["name"],
+                        item["uart_log_gzip_b64"],
+                    )
+                except ValueError as exc:
+                    return JsonResponse({"error": str(exc)}, status=400)
             TestResult.objects.update_or_create(
                 run=run,
                 test_case=test_case,
@@ -216,7 +282,7 @@ def ingest_run(request):
                     "hardware_status": item.get("hardware_status", Status.UNKNOWN),
                     "duration_seconds": item.get("duration_seconds"),
                     "failure_reason": item.get("failure_reason", ""),
-                    "log_path": item.get("log_path", ""),
+                    "log_path": log_path,
                 },
             )
         for item in payload.get("artifacts", []):

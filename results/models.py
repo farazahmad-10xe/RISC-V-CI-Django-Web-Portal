@@ -124,7 +124,11 @@ class TestResult(models.Model):
 
     @property
     def log_url(self):
-        return self.log_path if self.log_path.startswith(("http://", "https://")) else ""
+        if not self.log_path:
+            return ""
+        if self.log_path.startswith(("http://", "https://")):
+            return self.log_path
+        return reverse("test-uart-download", args=[self.id])
 
 
 class Artifact(models.Model):

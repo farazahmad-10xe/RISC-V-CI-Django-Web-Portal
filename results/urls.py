@@ -11,5 +11,10 @@ urlpatterns = [
         views.artifact_download,
         name="artifact-download",
     ),
+    path(
+        "results/<int:result_id>/uart/",
+        views.test_uart_download,
+        name="test-uart-download",
+    ),
     path("api/v1/runs/", views.ingest_run, name="api-ingest-run"),
 ]

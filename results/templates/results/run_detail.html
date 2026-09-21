@@ -3,11 +3,13 @@
 {% block content %}
 <nav class="crumbs"><a href="{% url 'dashboard' %}">Dashboard</a><span>/</span><a href="{{ run.job.board.get_absolute_url }}">{{ run.job.board.name }}</a><span>/</span><span>Build #{{ run.build_number }}</span></nav>
 <section class="hero compact"><div><p class="eyebrow">{{ run.job.name }}</p><h1>Build #{{ run.build_number }}</h1><p class="muted">Updated {{ run.updated_at|date:"M d, Y H:i:s" }}</p></div><span class="badge large status-{{ run.status|lower }}">{{ run.get_status_display }}</span></section>
-<section class="stat-grid">
-  <article class="stat"><span>Privileged progress</span><strong>{{ privileged_summary.completed }}/{{ privileged_summary.expected }}</strong></article>
-  <article class="stat pass"><span>Privileged passed</span><strong>{{ privileged_summary.passed }}</strong></article>
-  <article class="stat fail"><span>Privileged failed</span><strong>{{ privileged_summary.failed }}</strong></article>
-  <article class="stat"><span>Privileged pass rate</span><strong>{{ privileged_summary.pass_percent }}%</strong></article>
+<section class="run-suite-grid">
+  {% for suite in suite_summaries %}
+  <article class="panel run-suite-summary">
+    <div><p class="eyebrow">{{ suite.name }} tests</p><strong>{{ suite.pass_percent }}%</strong><span>pass rate</span></div>
+    <dl><dt>Expected</dt><dd>{{ suite.expected }}</dd><dt>Executed</dt><dd>{{ suite.completed }}</dd><dt>Passed</dt><dd class="text-pass">{{ suite.passed }}</dd><dt>Failed</dt><dd class="text-fail">{{ suite.failed }}</dd><dt>Not run</dt><dd>{{ suite.not_run }}</dd></dl>
+  </article>
+  {% endfor %}
 </section>
 <section class="two-column">
   <article class="panel"><h2>Reproduction details</h2><dl class="detail-list"><dt>Board</dt><dd>{{ run.job.board.name }}</dd><dt>Core</dt><dd>{{ run.job.board.core_profile|default:"—" }}</dd><dt>Sail version</dt><dd><code>{{ run.metadata.sail_version|default:"—" }}</code></dd><dt>Started</dt><dd>{{ run.started_at|date:"M d, Y H:i:s"|default:"—" }}</dd><dt>Finished</dt><dd>{{ run.finished_at|date:"M d, Y H:i:s"|default:"Running" }}</dd><dt>Runner revision</dt><dd><code>{{ run.git_revision|default:"—" }}</code></dd><dt>ACT revision</dt><dd><code>{{ run.act_revision|default:"—" }}</code></dd></dl></article>
