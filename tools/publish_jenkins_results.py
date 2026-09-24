@@ -331,17 +331,18 @@ def build_payload(args: argparse.Namespace) -> dict:
     }
     observed_names = set(sail) | set(spike) | set(cases) | set(artifact_categories)
     test_scope = state.get("TEST_SCOPE", "").strip().lower()
-    if test_scope == "priv":
-        # A privileged-only job may still be given a full-suite inventory workbook.
-        # Use inventories and unselected artifacts only as metadata; they must
-        # not add tests that were excluded from this Sail-runnable execution.
+    if test_scope in {"priv", "all"}:
+        # A job may be given a broader inventory than its Sail-runnable hardware
+        # plan. Use inventories and unselected artifacts only as metadata; they
+        # must not add tests that were excluded from this execution.
         selected_names = (
             set(spike)
             | set(cases)
             | {name for name, status in sail.items() if status != "UNKNOWN"}
         )
         names = sorted(selected_names or set(artifact_categories), key=str.casefold)
-        categories.update({name: "Privileged" for name in names})
+        if test_scope == "priv":
+            categories.update({name: "Privileged" for name in names})
     else:
         names = sorted(observed_names | set(categories), key=str.casefold)
     run_id = state.get("RUN_ID", run_root.name)

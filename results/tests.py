@@ -269,7 +269,7 @@ class PortalTests(TestCase):
         self.assertContains(detail, "0.14")
         self.assertContains(detail, "runner123")
         self.assertContains(detail, "ExceptionsM-01")
-        self.assertNotContains(detail, "I-add-01")
+        self.assertContains(detail, "I-add-01")
         self.assertContains(detail, "https://jenkins/artifact/uart.log")
         self.assertContains(detail, "https://jenkins/artifact/summary.md")
 

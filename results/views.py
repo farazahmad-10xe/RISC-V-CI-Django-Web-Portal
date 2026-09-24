@@ -59,7 +59,7 @@ def dashboard(request):
                     failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
                 )
             }
-            for category in ("Privileged", "Non-Privileged"):
+            for category in ("Privileged", "Non-Privileged", "Vector"):
                 values = summaries.get(category, {})
                 executed = values.get("executed", 0)
                 passed = values.get("passed", 0)
@@ -131,9 +131,7 @@ def legacy_run_detail(request, slug, build_number):
 @login_required
 def run_detail(request, slug, job_name, build_number):
     run = _run_for_job(slug, job_name, build_number)
-    results = run.test_results.select_related("test_case").filter(
-        test_case__category="Privileged"
-    )
+    results = run.test_results.select_related("test_case")
     status = request.GET.get("status", "").upper()
     query = request.GET.get("q", "").strip()
     if status == "NOT_RUN":
@@ -143,7 +141,7 @@ def run_detail(request, slug, job_name, build_number):
     if query:
         results = results.filter(test_case__name__icontains=query)
     suite_summaries = []
-    for category in ("Privileged", "Non-Privileged"):
+    for category in ("Privileged", "Non-Privileged", "Vector"):
         summary = run.test_results.filter(test_case__category=category).aggregate(
             expected=Count("id"),
             completed=Count(
