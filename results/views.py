@@ -61,6 +61,8 @@ def dashboard(request):
             }
             for category in ("Privileged", "Non-Privileged", "Vector"):
                 values = summaries.get(category, {})
+                if not values:
+                    continue
                 executed = values.get("executed", 0)
                 passed = values.get("passed", 0)
                 board.suite_summaries.append(
@@ -151,6 +153,8 @@ def run_detail(request, slug, job_name, build_number):
             passed=Count("id", filter=Q(hardware_status=Status.PASS)),
             failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
         )
+        if not summary["expected"]:
+            continue
         decided = summary["passed"] + summary["failed"]
         summary.update(
             name=category,
