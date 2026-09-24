@@ -470,7 +470,12 @@ def ingest_run(request):
         run, created = TestRun.objects.update_or_create(
             job=job, build_number=build_number, defaults=run_defaults
         )
-        for item in payload.get("results", []):
+        incoming_results = payload.get("results", [])
+        incoming_test_names = {
+            str(item.get("name", "")) for item in incoming_results if item.get("name")
+        }
+        run.test_results.exclude(test_case__name__in=incoming_test_names).delete()
+        for item in incoming_results:
             test_case, _ = TestCase.objects.update_or_create(
                 name=item["name"],
                 defaults={

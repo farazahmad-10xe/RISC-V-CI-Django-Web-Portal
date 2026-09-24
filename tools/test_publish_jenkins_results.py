@@ -160,6 +160,56 @@ class PublisherTests(unittest.TestCase):
             },
         )
 
+    def test_priv_scope_excludes_full_inventory_and_forces_privileged_category(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state_root = root / "state"
+            run_root = root / "run"
+            artifact_root = root / "build" / "priv"
+            state_root.mkdir()
+            run_root.mkdir()
+            elf = artifact_root / "ExceptionsM" / "ExceptionsM-01.sig.elf"
+            elf.parent.mkdir(parents=True)
+            elf.touch()
+            excluded_elf = artifact_root / "InterruptsM" / "InterruptsM-01.sig.elf"
+            excluded_elf.parent.mkdir(parents=True)
+            excluded_elf.touch()
+            (state_root / "state.env").write_text(
+                "RUN_ID=priv_run\nTEST_SCOPE=priv\nEXPECTED_CASES=1\n"
+                f"ARTIFACT_ROOT={artifact_root}\n"
+            )
+            (state_root / "sail_reference_status.tsv").write_text(
+                "test_name\tsail_status\nExceptionsM-01\tPASS\n"
+            )
+            (run_root / "cases.json").write_text(
+                json.dumps([{"test_name": "ExceptionsM-01", "status": "PASS"}])
+            )
+            inventory_path = root / "inventory.xlsx"
+            write_inventory_workbook(
+                inventory_path,
+                ["ExceptionsM-01", "InterruptsM-01"],
+                ["I-add-01"],
+            )
+            args = argparse.Namespace(
+                state_root=state_root,
+                run_root=run_root,
+                board_slug="vf2",
+                board_name="VisionFive 2",
+                core_profile="SiFive U74",
+                job_name="vf2-uart-weekly",
+                build_number=1,
+                build_url="https://jenkins/job/vf2-uart-weekly/1/",
+                status="AUTO",
+                started_at="",
+                finished_at="",
+                suite_inventory_xlsx=inventory_path,
+            )
+            payload = build_payload(args)
+
+        self.assertEqual([item["name"] for item in payload["results"]], ["ExceptionsM-01"])
+        self.assertEqual(payload["results"][0]["category"], "Privileged")
+        self.assertEqual(payload["passed_cases"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

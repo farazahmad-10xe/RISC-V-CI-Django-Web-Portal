@@ -8,7 +8,7 @@
 <section class="run-suite-grid">
   {% for suite in suite_summaries %}
   <article class="panel run-suite-summary">
-    <div><p class="eyebrow">{{ suite.name }} tests</p><strong>{{ suite.pass_percent }}%</strong><span>pass rate</span></div>
+    <div><p class="eyebrow">{{ suite.name }} tests</p><strong>{{ suite.passed }} / {{ suite.expected }}</strong><span>PASS / total</span></div>
     <dl><dt>Expected</dt><dd>{{ suite.expected }}</dd><dt>Executed</dt><dd>{{ suite.completed }}</dd><dt>Passed</dt><dd class="text-pass">{{ suite.passed }}</dd><dt>Failed</dt><dd class="text-fail">{{ suite.failed }}</dd><dt>Not run</dt><dd>{{ suite.not_run }}</dd></dl>
   </article>
   {% endfor %}

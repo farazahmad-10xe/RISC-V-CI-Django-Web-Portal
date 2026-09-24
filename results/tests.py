@@ -274,6 +274,7 @@ class PortalTests(TestCase):
         self.assertContains(detail, "https://jenkins/artifact/summary.md")
 
         payload["completed_cases"] = 7
+        payload["results"] = payload["results"][:1]
         response = self.client.post(
             reverse("api-ingest-run"),
             data=json.dumps(payload),
@@ -283,6 +284,10 @@ class PortalTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["created"])
         self.assertEqual(TestRun.objects.get().completed_cases, 7)
+        self.assertEqual(TestRun.objects.get().test_results.count(), 1)
+        self.assertFalse(
+            TestRun.objects.get().test_results.filter(test_case__name="I-add-01").exists()
+        )
 
     def test_artifact_cannot_escape_root(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
