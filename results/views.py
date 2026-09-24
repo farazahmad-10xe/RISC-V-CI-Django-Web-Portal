@@ -106,13 +106,31 @@ def board_detail(request, slug):
     )
 
 
-@login_required
-def run_detail(request, slug, build_number):
-    run = get_object_or_404(
+def _run_for_job(slug, job_name, build_number):
+    return get_object_or_404(
         TestRun.objects.select_related("job", "job__board"),
         job__board__slug=slug,
+        job__name=job_name,
         build_number=build_number,
     )
+
+
+@login_required
+def legacy_run_detail(request, slug, build_number):
+    run = (
+        TestRun.objects.filter(job__board__slug=slug, build_number=build_number)
+        .select_related("job", "job__board")
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    if run is None:
+        raise Http404
+    return redirect(run.get_absolute_url())
+
+
+@login_required
+def run_detail(request, slug, job_name, build_number):
+    run = _run_for_job(slug, job_name, build_number)
     results = run.test_results.select_related("test_case").filter(
         test_case__category="Privileged"
     )
@@ -160,12 +178,8 @@ def _can_manage_analysis(user):
 
 
 @login_required
-def run_workbook(request, slug, build_number):
-    run = get_object_or_404(
-        TestRun.objects.select_related("job", "job__board"),
-        job__board__slug=slug,
-        build_number=build_number,
-    )
+def run_workbook(request, slug, job_name, build_number):
+    run = _run_for_job(slug, job_name, build_number)
     selected_suite = request.GET.get("suite", "All")
     suites = ("All", "Privileged", "Non-Privileged", "Vector")
     if selected_suite not in suites:
@@ -240,21 +254,21 @@ def run_workbook(request, slug, build_number):
 
 @login_required
 @require_POST
-def add_analysis_column(request, slug, build_number):
+def add_analysis_column(request, slug, job_name, build_number):
     if not _can_manage_analysis(request.user):
         raise PermissionDenied("You cannot add failure-analysis columns")
-    run = get_object_or_404(
-        TestRun,
-        job__board__slug=slug,
-        build_number=build_number,
-    )
+    run = _run_for_job(slug, job_name, build_number)
     name = " ".join(request.POST.get("name", "").split())
     if not name or len(name) > 80:
         messages.error(request, "Column name must contain 1–80 characters.")
-        return redirect("run-workbook", slug=slug, build_number=build_number)
+        return redirect(
+            "run-workbook", slug=slug, job_name=job_name, build_number=build_number
+        )
     if run.analysis_columns.filter(name__iexact=name).exists():
         messages.error(request, f'Analysis column "{name}" already exists.')
-        return redirect("run-workbook", slug=slug, build_number=build_number)
+        return redirect(
+            "run-workbook", slug=slug, job_name=job_name, build_number=build_number
+        )
     position = (run.analysis_columns.aggregate(value=Max("position"))["value"] or 0) + 1
     column = AnalysisColumn.objects.create(
         run=run,
@@ -264,20 +278,16 @@ def add_analysis_column(request, slug, build_number):
     )
     messages.success(request, f'Analysis column "{name}" was added.')
     return redirect(
-        f'{reverse("run-workbook", args=[slug, build_number])}?edit={column.id}'
+        f'{reverse("run-workbook", args=[slug, job_name, build_number])}?edit={column.id}'
     )
 
 
 @login_required
 @require_POST
-def save_analysis_column(request, slug, build_number, column_id):
+def save_analysis_column(request, slug, job_name, build_number, column_id):
     if not _can_manage_analysis(request.user):
         raise PermissionDenied("You cannot edit failure analysis")
-    run = get_object_or_404(
-        TestRun,
-        job__board__slug=slug,
-        build_number=build_number,
-    )
+    run = _run_for_job(slug, job_name, build_number)
     column = get_object_or_404(AnalysisColumn, id=column_id, run=run)
     result_ids = []
     submitted = {}
@@ -307,7 +317,7 @@ def save_analysis_column(request, slug, build_number, column_id):
                     column=column, test_result_id=result_id
                 ).delete()
     messages.success(request, f'Analysis column "{column.name}" was saved.')
-    destination = reverse("run-workbook", args=[slug, build_number])
+    destination = reverse("run-workbook", args=[slug, job_name, build_number])
     suite = request.POST.get("suite", "All")
     if suite in {"Privileged", "Non-Privileged", "Vector"}:
         destination += f"?suite={quote(suite)}"
@@ -316,15 +326,11 @@ def save_analysis_column(request, slug, build_number, column_id):
 
 @login_required
 @require_POST
-def delete_run(request, slug, build_number):
+def delete_run(request, slug, job_name, build_number):
     if not request.user.is_staff:
         raise PermissionDenied("Only portal administrators can delete runs")
 
-    run = get_object_or_404(
-        TestRun.objects.select_related("job", "job__board"),
-        job__board__slug=slug,
-        build_number=build_number,
-    )
+    run = _run_for_job(slug, job_name, build_number)
     board_url = run.job.board.get_absolute_url()
     uart_directory = (
         settings.PORTAL_ARTIFACT_ROOT

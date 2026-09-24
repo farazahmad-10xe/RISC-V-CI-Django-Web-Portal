@@ -73,7 +73,11 @@ class TestRun(models.Model):
     def get_absolute_url(self):
         return reverse(
             "run-detail",
-            kwargs={"slug": self.job.board.slug, "build_number": self.build_number},
+            kwargs={
+                "slug": self.job.board.slug,
+                "job_name": self.job.name,
+                "build_number": self.build_number,
+            },
         )
 
     @property

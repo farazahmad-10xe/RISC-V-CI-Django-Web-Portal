@@ -24,7 +24,7 @@ uv run ruff check .
 
 ## Result ingestion
 
-Jenkins publishes a JSON document to `POST /portal/api/v1/runs/` with the token in `X-Portal-Token`. Reposting the same job and build number safely updates the run.
+Jenkins publishes a JSON document to `POST /portal/api/v1/runs/` with the token in `X-Portal-Token`. Reposting the same job and build number safely updates the run. Canonical run URLs contain both the Jenkins job name and build number, so build `#1` from two different jobs remains unambiguous.
 
 Minimal example:
 

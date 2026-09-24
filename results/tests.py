@@ -74,7 +74,7 @@ class PortalTests(TestCase):
 
         self.client.force_login(self.user)
         response = self.client.get(
-            reverse("run-detail", args=["vf2", 3]),
+            reverse("run-detail", args=["vf2", "vf2-job", 3]),
             {"status": "NOT_RUN"},
         )
         self.assertContains(response, "SkippedM-01")
@@ -82,15 +82,32 @@ class PortalTests(TestCase):
         self.assertNotContains(response, "PassedM-01")
         self.assertContains(response, "Not Run (Skipped + Unknown)")
 
+    def test_same_build_number_from_two_jobs_has_distinct_run_urls(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        sanity = JenkinsJob.objects.create(board=board, name="vf2-uart-sanity")
+        weekly = JenkinsJob.objects.create(board=board, name="vf2-uart-weekly")
+        sanity_run = TestRun.objects.create(job=sanity, build_number=1)
+        weekly_run = TestRun.objects.create(job=weekly, build_number=1)
+
+        self.assertNotEqual(sanity_run.get_absolute_url(), weekly_run.get_absolute_url())
+        self.client.force_login(self.user)
+        sanity_response = self.client.get(sanity_run.get_absolute_url())
+        weekly_response = self.client.get(weekly_run.get_absolute_url())
+        self.assertContains(sanity_response, "vf2-uart-sanity")
+        self.assertContains(weekly_response, "vf2-uart-weekly")
+
+        legacy = self.client.get(reverse("legacy-run-detail", args=["vf2", 1]))
+        self.assertRedirects(legacy, weekly_run.get_absolute_url())
+
     def test_non_staff_user_cannot_delete_run(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
         job = JenkinsJob.objects.create(board=board, name="vf2-job")
         run = TestRun.objects.create(job=job, build_number=4)
 
         self.client.force_login(self.user)
-        detail = self.client.get(reverse("run-detail", args=["vf2", 4]))
+        detail = self.client.get(reverse("run-detail", args=["vf2", "vf2-job", 4]))
         self.assertNotContains(detail, "Delete from portal")
-        response = self.client.post(reverse("run-delete", args=["vf2", 4]))
+        response = self.client.post(reverse("run-delete", args=["vf2", "vf2-job", 4]))
 
         self.assertEqual(response.status_code, 403)
         self.assertTrue(TestRun.objects.filter(id=run.id).exists())
@@ -113,12 +130,14 @@ class PortalTests(TestCase):
             (uart_directory / "ExceptionsM-01.log").write_text("no test run")
 
             self.client.force_login(staff)
-            detail = self.client.get(reverse("run-detail", args=["vf2", 4]))
+            detail = self.client.get(reverse("run-detail", args=["vf2", "vf2-job", 4]))
             self.assertContains(detail, "Delete from portal")
             self.assertContains(detail, "Cancel")
             self.assertContains(detail, "OK, delete")
             with override_settings(PORTAL_ARTIFACT_ROOT=artifact_root):
-                response = self.client.post(reverse("run-delete", args=["vf2", 4]))
+                response = self.client.post(
+                    reverse("run-delete", args=["vf2", "vf2-job", 4])
+                )
 
             self.assertRedirects(response, reverse("board-detail", args=["vf2"]))
             self.assertFalse(uart_directory.exists())
@@ -144,13 +163,15 @@ class PortalTests(TestCase):
         )
 
         self.client.force_login(self.user)
-        response = self.client.get(reverse("run-workbook", args=["vf2", 8]))
+        response = self.client.get(
+            reverse("run-workbook", args=["vf2", "vf2-job", 8])
+        )
 
         self.assertContains(response, "ExceptionsM-01")
         self.assertContains(response, "hardware mismatch")
         self.assertNotContains(response, "Add an analysis column")
         denied = self.client.post(
-            reverse("analysis-column-add", args=["vf2", 8]),
+            reverse("analysis-column-add", args=["vf2", "vf2-job", 8]),
             {"name": "Owner"},
         )
         self.assertEqual(denied.status_code, 403)
@@ -176,17 +197,17 @@ class PortalTests(TestCase):
 
         self.client.force_login(editor)
         created = self.client.post(
-            reverse("analysis-column-add", args=["vf2", 9]),
+            reverse("analysis-column-add", args=["vf2", "vf2-job", 9]),
             {"name": "Investigation notes"},
         )
         column = AnalysisColumn.objects.get(run=run)
         self.assertRedirects(
             created,
-            f'{reverse("run-workbook", args=["vf2", 9])}?edit={column.id}',
+            f'{reverse("run-workbook", args=["vf2", "vf2-job", 9])}?edit={column.id}',
         )
 
         saved = self.client.post(
-            reverse("analysis-column-save", args=["vf2", 9, column.id]),
+            reverse("analysis-column-save", args=["vf2", "vf2-job", 9, column.id]),
             {f"analysis_{result.id}": "Needs trap-log review", "suite": "Privileged"},
         )
         self.assertEqual(saved.status_code, 302)
@@ -241,7 +262,9 @@ class PortalTests(TestCase):
         self.assertEqual(TestRun.objects.get().test_results.count(), 2)
 
         self.client.force_login(self.user)
-        detail = self.client.get(reverse("run-detail", args=["vf2", 3]))
+        detail = self.client.get(
+            reverse("run-detail", args=["vf2", "vf2-privileged-weekly", 3])
+        )
         self.assertContains(detail, "Sail version")
         self.assertContains(detail, "0.14")
         self.assertContains(detail, "runner123")
