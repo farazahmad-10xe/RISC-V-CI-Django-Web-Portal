@@ -1,12 +1,17 @@
 import base64
 import binascii
 import gzip
+import hashlib
 import json
 import re
 import secrets
 import shutil
+import ssl
 from collections import Counter
-from urllib.parse import quote
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode, urljoin
+from urllib.request import Request, urlopen
 
 from django.conf import settings
 from django.contrib import messages
@@ -26,12 +31,176 @@ from .models import (
     AnalysisValue,
     Artifact,
     Board,
+    ElfSubmission,
     JenkinsJob,
     Status,
     TestCase,
     TestResult,
     TestRun,
 )
+
+
+def _uploaded_elf_details(upload):
+    max_bytes = settings.PORTAL_ELF_UPLOAD_MAX_BYTES
+    if not upload or upload.size <= 0:
+        raise ValueError("Select a non-empty ELF file.")
+    if upload.size > max_bytes:
+        raise ValueError(f"ELF exceeds the {max_bytes // (1024 * 1024)} MiB upload limit.")
+
+    header = upload.read(20)
+    upload.seek(0)
+    if len(header) < 20 or header[:4] != b"\x7fELF":
+        raise ValueError("The uploaded file is not an ELF binary.")
+    if header[4] != 2 or header[5] != 1:
+        raise ValueError("Only little-endian ELF64 binaries are supported.")
+    if int.from_bytes(header[18:20], "little") != 243:
+        raise ValueError("The uploaded ELF is not for RISC-V.")
+
+    digest = hashlib.sha256()
+    for chunk in upload.chunks():
+        digest.update(chunk)
+    upload.seek(0)
+    return Path(upload.name).name[:255], digest.hexdigest()
+
+
+def _jenkins_ssl_context():
+    ca_file = settings.JENKINS_CA_FILE.strip()
+    return ssl.create_default_context(cafile=ca_file or None)
+
+
+def _jenkins_request(url, authorization, *, data=None, headers=None):
+    request_headers = {"Authorization": authorization}
+    request_headers.update(headers or {})
+    request = Request(url, data=data, headers=request_headers)
+    return urlopen(request, timeout=30, context=_jenkins_ssl_context())
+
+
+def _trigger_single_elf_job(request, submission, raw_download_token):
+    base = settings.JENKINS_TRIGGER_URL.rstrip("/")
+    user = settings.JENKINS_TRIGGER_USER
+    token = settings.JENKINS_TRIGGER_TOKEN
+    if not base or not user or not token:
+        raise RuntimeError("Jenkins triggering is not configured on the portal.")
+
+    authorization = "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()
+    crumb_headers = {}
+    try:
+        with _jenkins_request(f"{base}/crumbIssuer/api/json", authorization) as response:
+            crumb = json.loads(response.read())
+            crumb_headers[crumb["crumbRequestField"]] = crumb["crumb"]
+    except HTTPError as exc:
+        if exc.code != 404:
+            raise
+
+    download_path = reverse("elf-download", args=[submission.id])
+    if settings.PORTAL_EXTERNAL_URL:
+        download_url = settings.PORTAL_EXTERNAL_URL.rstrip("/") + download_path
+    else:
+        download_url = request.build_absolute_uri(download_path)
+    parameters = urlencode(
+        {
+            "SUBMISSION_ID": str(submission.id),
+            "TARGET_BOARD": submission.board.slug,
+            "ELF_DOWNLOAD_URL": download_url,
+            "ELF_DOWNLOAD_TOKEN": raw_download_token,
+            "ELF_SHA256": submission.sha256,
+            "ELF_NAME": submission.original_name,
+        }
+    ).encode()
+    job = quote(settings.JENKINS_SINGLE_ELF_JOB, safe="")
+    trigger_url = f"{base}/job/{job}/buildWithParameters"
+    try:
+        with _jenkins_request(
+            trigger_url,
+            authorization,
+            data=parameters,
+            headers={"Content-Type": "application/x-www-form-urlencoded", **crumb_headers},
+        ) as response:
+            return urljoin(base + "/", response.headers.get("Location", ""))
+    except (HTTPError, URLError) as exc:
+        detail = ""
+        if isinstance(exc, HTTPError):
+            detail = exc.read(500).decode(errors="replace").strip()
+        raise RuntimeError(f"Jenkins rejected the request: {exc}. {detail}".strip()) from exc
+
+
+@login_required
+def elf_submit(request):
+    allowed = settings.PORTAL_SINGLE_ELF_BOARD_SLUGS
+    boards = Board.objects.filter(enabled=True, slug__in=allowed).order_by("name")
+    if request.method == "POST":
+        board = boards.filter(pk=request.POST.get("board")).first()
+        upload = request.FILES.get("elf")
+        try:
+            if board is None:
+                raise ValueError("Select a supported board.")
+            original_name, sha256 = _uploaded_elf_details(upload)
+            raw_token = secrets.token_urlsafe(32)
+            submission = ElfSubmission.objects.create(
+                uploaded_by=request.user,
+                board=board,
+                elf=upload,
+                original_name=original_name,
+                sha256=sha256,
+                size_bytes=upload.size,
+                download_token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+            )
+            try:
+                submission.jenkins_queue_url = _trigger_single_elf_job(
+                    request, submission, raw_token
+                )
+                submission.save(update_fields=["jenkins_queue_url", "updated_at"])
+            except Exception:
+                submission.elf.delete(save=False)
+                submission.delete()
+                raise
+        except (ValueError, RuntimeError, HTTPError, URLError, OSError) as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "ELF queued for execution.")
+            return redirect(submission)
+
+    recent = ElfSubmission.objects.filter(uploaded_by=request.user).select_related("board", "run")[
+        :20
+    ]
+    return render(
+        request,
+        "results/elf_submit.html",
+        {
+            "boards": boards,
+            "recent_submissions": recent,
+            "max_upload_mib": settings.PORTAL_ELF_UPLOAD_MAX_BYTES // (1024 * 1024),
+        },
+    )
+
+
+@login_required
+def elf_submission_detail(request, submission_id):
+    submission = get_object_or_404(
+        ElfSubmission.objects.select_related("board", "run", "run__job"),
+        id=submission_id,
+    )
+    if submission.uploaded_by_id != request.user.id and not request.user.is_staff:
+        raise PermissionDenied
+    return render(request, "results/elf_submission_detail.html", {"submission": submission})
+
+
+def elf_download(request, submission_id):
+    submission = get_object_or_404(ElfSubmission, id=submission_id)
+    supplied = request.headers.get("X-ELF-Download-Token", "")
+    supplied_hash = hashlib.sha256(supplied.encode()).hexdigest()
+    if not supplied or not secrets.compare_digest(submission.download_token_hash, supplied_hash):
+        return JsonResponse({"error": "unauthorized"}, status=401)
+    try:
+        handle = submission.elf.open("rb")
+    except OSError as exc:
+        raise Http404("ELF is no longer available") from exc
+    return FileResponse(
+        handle,
+        as_attachment=True,
+        filename=submission.original_name,
+        content_type="application/x-elf",
+    )
 
 
 @login_required
@@ -51,9 +220,7 @@ def dashboard(request):
                 for item in board.latest_run.test_results.values("test_case__category").annotate(
                     executed=Count(
                         "id",
-                        filter=Q(
-                            hardware_status__in=[Status.PASS, Status.FAIL, Status.SKIPPED]
-                        ),
+                        filter=Q(hardware_status__in=[Status.PASS, Status.FAIL, Status.SKIPPED]),
                     ),
                     passed=Count("id", filter=Q(hardware_status=Status.PASS)),
                     failed=Count("id", filter=Q(hardware_status=Status.FAIL)),
@@ -187,9 +354,7 @@ def run_workbook(request, slug, job_name, build_number):
     if selected_suite not in suites:
         selected_suite = "All"
 
-    results = list(
-        run.test_results.select_related("test_case").prefetch_related("analysis_values")
-    )
+    results = list(run.test_results.select_related("test_case").prefetch_related("analysis_values"))
     summary = {}
     for suite in suites:
         suite_results = (
@@ -208,9 +373,7 @@ def run_workbook(request, slug, job_name, build_number):
             "pass_percent": round(counts[Status.PASS] * 100 / executed, 1) if executed else 0,
         }
     if selected_suite != "All":
-        results = [
-            result for result in results if result.test_case.category == selected_suite
-        ]
+        results = [result for result in results if result.test_case.category == selected_suite]
 
     columns = list(run.analysis_columns.all())
     can_edit = _can_manage_analysis(request.user)
@@ -230,8 +393,7 @@ def run_workbook(request, slug, job_name, build_number):
             {
                 "result": result,
                 "analysis": [
-                    {"column": column, "value": stored.get(column.id, "")}
-                    for column in columns
+                    {"column": column, "value": stored.get(column.id, "")} for column in columns
                 ],
             }
         )
@@ -263,14 +425,10 @@ def add_analysis_column(request, slug, job_name, build_number):
     name = " ".join(request.POST.get("name", "").split())
     if not name or len(name) > 80:
         messages.error(request, "Column name must contain 1–80 characters.")
-        return redirect(
-            "run-workbook", slug=slug, job_name=job_name, build_number=build_number
-        )
+        return redirect("run-workbook", slug=slug, job_name=job_name, build_number=build_number)
     if run.analysis_columns.filter(name__iexact=name).exists():
         messages.error(request, f'Analysis column "{name}" already exists.')
-        return redirect(
-            "run-workbook", slug=slug, job_name=job_name, build_number=build_number
-        )
+        return redirect("run-workbook", slug=slug, job_name=job_name, build_number=build_number)
     position = (run.analysis_columns.aggregate(value=Max("position"))["value"] or 0) + 1
     column = AnalysisColumn.objects.create(
         run=run,
@@ -280,7 +438,7 @@ def add_analysis_column(request, slug, job_name, build_number):
     )
     messages.success(request, f'Analysis column "{name}" was added.')
     return redirect(
-        f'{reverse("run-workbook", args=[slug, job_name, build_number])}?edit={column.id}'
+        f"{reverse('run-workbook', args=[slug, job_name, build_number])}?edit={column.id}"
     )
 
 
@@ -315,9 +473,7 @@ def save_analysis_column(request, slug, job_name, build_number, column_id):
                     defaults={"value": value, "updated_by": request.user},
                 )
             else:
-                AnalysisValue.objects.filter(
-                    column=column, test_result_id=result_id
-                ).delete()
+                AnalysisValue.objects.filter(column=column, test_result_id=result_id).delete()
     messages.success(request, f'Analysis column "{column.name}" was saved.')
     destination = reverse("run-workbook", args=[slug, job_name, build_number])
     suite = request.POST.get("suite", "All")
@@ -455,9 +611,7 @@ def ingest_run(request):
                 parse_datetime(payload["started_at"]) if payload.get("started_at") else None
             ),
             "finished_at": (
-                parse_datetime(payload["finished_at"])
-                if payload.get("finished_at")
-                else None
+                parse_datetime(payload["finished_at"]) if payload.get("finished_at") else None
             ),
             "expected_cases": int(payload.get("expected_cases", 0)),
             "completed_cases": int(payload.get("completed_cases", 0)),
@@ -521,6 +675,16 @@ def ingest_run(request):
                     "sha256": item.get("sha256", ""),
                 },
             )
+        submission_id = payload.get("metadata", {}).get("submission_id")
+        if submission_id:
+            submission = ElfSubmission.objects.filter(id=submission_id).first()
+            if submission is not None:
+                submission.run = run
+                submission.status = run.status
+                submission.download_token_hash = ""
+                submission.save(
+                    update_fields=["run", "status", "download_token_hash", "updated_at"]
+                )
     return JsonResponse(
         {"id": run.id, "url": run.get_absolute_url(), "created": created},
         status=201 if created else 200,

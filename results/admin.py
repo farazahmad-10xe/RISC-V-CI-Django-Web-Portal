@@ -5,11 +5,20 @@ from .models import (
     AnalysisValue,
     Artifact,
     Board,
+    ElfSubmission,
     JenkinsJob,
     TestCase,
     TestResult,
     TestRun,
 )
+
+
+@admin.register(ElfSubmission)
+class ElfSubmissionAdmin(admin.ModelAdmin):
+    list_display = ("original_name", "board", "uploaded_by", "status", "created_at")
+    list_filter = ("status", "board")
+    search_fields = ("original_name", "sha256", "uploaded_by__username")
+    readonly_fields = ("sha256", "size_bytes", "download_token_hash", "created_at", "updated_at")
 
 
 @admin.register(Board)

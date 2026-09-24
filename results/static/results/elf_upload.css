@@ -1,0 +1,13 @@
+.upload-layout { align-items: start; }
+.upload-note { margin: 10px 0 22px; }
+.upload-form { display: grid; gap: 18px; }
+.upload-form input, .upload-form select { width: 100%; }
+.upload-form label span { color: var(--muted); font-size: 11px; }
+.upload-form .button { justify-self: start; }
+.workflow-list { color: var(--muted); margin: 18px 0 0; padding-left: 22px; }
+.workflow-list li { padding: 5px 0; }
+.hash-value { overflow-wrap: anywhere; }
+.message-stack { display: grid; gap: 8px; margin-bottom: 20px; }
+.message { background: var(--surface2); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
+.message.success { border-color: rgba(71, 209, 140, .35); color: var(--green); }
+.message.error { border-color: rgba(255, 107, 120, .35); color: var(--red); }

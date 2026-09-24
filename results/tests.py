@@ -1,11 +1,14 @@
 import base64
 import gzip
+import hashlib
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -14,6 +17,7 @@ from .models import (
     AnalysisValue,
     Artifact,
     Board,
+    ElfSubmission,
     JenkinsJob,
     Status,
     TestResult,
@@ -31,6 +35,76 @@ class PortalTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.client.force_login(self.user)
         self.assertEqual(self.client.get(reverse("dashboard")).status_code, 200)
+
+    def _riscv_elf(self, name="uploaded.elf"):
+        header = bytearray(64)
+        header[:4] = b"\x7fELF"
+        header[4] = 2
+        header[5] = 1
+        header[18:20] = (243).to_bytes(2, "little")
+        return SimpleUploadedFile(name, bytes(header), content_type="application/x-elf")
+
+    def test_elf_upload_requires_login(self):
+        self.assertEqual(self.client.get(reverse("elf-submit")).status_code, 302)
+
+    def test_elf_upload_queues_jenkins_job(self):
+        board = Board.objects.create(slug="visionfive2", name="VisionFive 2")
+        self.client.force_login(self.user)
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            override_settings(
+                MEDIA_ROOT=Path(temporary),
+                PORTAL_SINGLE_ELF_BOARD_SLUGS=("visionfive2",),
+            ),
+            patch(
+                "results.views._trigger_single_elf_job",
+                return_value="https://jenkins/queue/item/7/",
+            ) as trigger,
+        ):
+            response = self.client.post(
+                reverse("elf-submit"),
+                {"board": str(board.id), "elf": self._riscv_elf("case.elf")},
+            )
+            submission = ElfSubmission.objects.get()
+            self.assertRedirects(response, submission.get_absolute_url())
+            self.assertEqual(submission.original_name, "case.elf")
+            self.assertEqual(submission.size_bytes, 64)
+            self.assertEqual(submission.jenkins_queue_url, "https://jenkins/queue/item/7/")
+            trigger.assert_called_once()
+
+    def test_elf_upload_rejects_non_riscv_file(self):
+        board = Board.objects.create(slug="visionfive2", name="VisionFive 2")
+        self.client.force_login(self.user)
+        with override_settings(PORTAL_SINGLE_ELF_BOARD_SLUGS=("visionfive2",)):
+            response = self.client.post(
+                reverse("elf-submit"),
+                {"board": str(board.id), "elf": SimpleUploadedFile("bad.elf", b"no")},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "not an ELF binary")
+        self.assertFalse(ElfSubmission.objects.exists())
+
+    def test_jenkins_can_download_elf_only_with_submission_token(self):
+        board = Board.objects.create(slug="visionfive2", name="VisionFive 2")
+        raw_token = "one-time-test-token"
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            override_settings(MEDIA_ROOT=Path(temporary)),
+        ):
+            submission = ElfSubmission.objects.create(
+                uploaded_by=self.user,
+                board=board,
+                elf=self._riscv_elf("case.elf"),
+                original_name="case.elf",
+                sha256="0" * 64,
+                size_bytes=64,
+                download_token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+            )
+            url = reverse("elf-download", args=[submission.id])
+            self.assertEqual(self.client.get(url).status_code, 401)
+            response = self.client.get(url, headers={"X-ELF-Download-Token": raw_token})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(b"".join(response.streaming_content).startswith(b"\x7fELF"))
 
     def test_dashboard_shows_suite_results_for_each_board(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
@@ -135,9 +209,7 @@ class PortalTests(TestCase):
             self.assertContains(detail, "Cancel")
             self.assertContains(detail, "OK, delete")
             with override_settings(PORTAL_ARTIFACT_ROOT=artifact_root):
-                response = self.client.post(
-                    reverse("run-delete", args=["vf2", "vf2-job", 4])
-                )
+                response = self.client.post(reverse("run-delete", args=["vf2", "vf2-job", 4]))
 
             self.assertRedirects(response, reverse("board-detail", args=["vf2"]))
             self.assertFalse(uart_directory.exists())
@@ -163,9 +235,7 @@ class PortalTests(TestCase):
         )
 
         self.client.force_login(self.user)
-        response = self.client.get(
-            reverse("run-workbook", args=["vf2", "vf2-job", 8])
-        )
+        response = self.client.get(reverse("run-workbook", args=["vf2", "vf2-job", 8]))
 
         self.assertContains(response, "ExceptionsM-01")
         self.assertContains(response, "hardware mismatch")
@@ -180,9 +250,7 @@ class PortalTests(TestCase):
         editor = get_user_model().objects.create_user(
             "report-editor", password="safe-test-password"
         )
-        editor.user_permissions.add(
-            Permission.objects.get(codename="manage_failure_analysis")
-        )
+        editor.user_permissions.add(Permission.objects.get(codename="manage_failure_analysis"))
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
         job = JenkinsJob.objects.create(board=board, name="vf2-job")
         run = TestRun.objects.create(job=job, build_number=9)
@@ -203,7 +271,7 @@ class PortalTests(TestCase):
         column = AnalysisColumn.objects.get(run=run)
         self.assertRedirects(
             created,
-            f'{reverse("run-workbook", args=["vf2", "vf2-job", 9])}?edit={column.id}',
+            f"{reverse('run-workbook', args=['vf2', 'vf2-job', 9])}?edit={column.id}",
         )
 
         saved = self.client.post(
@@ -241,7 +309,7 @@ class PortalTests(TestCase):
                     "name": "I-add-01",
                     "category": "Non-Privileged",
                     "hardware_status": "PASS",
-                }
+                },
             ],
             "artifacts": [
                 {
@@ -262,9 +330,7 @@ class PortalTests(TestCase):
         self.assertEqual(TestRun.objects.get().test_results.count(), 2)
 
         self.client.force_login(self.user)
-        detail = self.client.get(
-            reverse("run-detail", args=["vf2", "vf2-privileged-weekly", 3])
-        )
+        detail = self.client.get(reverse("run-detail", args=["vf2", "vf2-privileged-weekly", 3]))
         self.assertContains(detail, "Sail version")
         self.assertContains(detail, "0.14")
         self.assertContains(detail, "runner123")
@@ -288,6 +354,43 @@ class PortalTests(TestCase):
         self.assertFalse(
             TestRun.objects.get().test_results.filter(test_case__name="I-add-01").exists()
         )
+
+    @override_settings(PORTAL_INGEST_TOKEN="test-token")
+    def test_ingest_links_single_elf_submission_to_run(self):
+        board = Board.objects.create(slug="visionfive2", name="VisionFive 2")
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            override_settings(MEDIA_ROOT=Path(temporary)),
+        ):
+            submission = ElfSubmission.objects.create(
+                uploaded_by=self.user,
+                board=board,
+                elf=self._riscv_elf(),
+                original_name="uploaded.elf",
+                sha256="0" * 64,
+                size_bytes=64,
+                download_token_hash="0" * 64,
+            )
+            response = self.client.post(
+                reverse("api-ingest-run"),
+                data=json.dumps(
+                    {
+                        "board": {"slug": "visionfive2", "name": "VisionFive 2"},
+                        "job": {"name": "riscv-uart-single-elf"},
+                        "build_number": 12,
+                        "status": "PASS",
+                        "metadata": {"submission_id": str(submission.id)},
+                        "results": [{"name": "uploaded.elf", "hardware_status": "PASS"}],
+                    }
+                ),
+                content_type="application/json",
+                headers={"X-Portal-Token": "test-token"},
+            )
+            self.assertEqual(response.status_code, 201)
+            submission.refresh_from_db()
+            self.assertEqual(submission.status, Status.PASS)
+            self.assertEqual(submission.run.build_number, 12)
+            self.assertEqual(submission.download_token_hash, "")
 
     def test_artifact_cannot_escape_root(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
@@ -315,9 +418,9 @@ class PortalTests(TestCase):
                     "name": "ExceptionsM-01",
                     "category": "Privileged",
                     "hardware_status": "PASS",
-                    "uart_log_gzip_b64": base64.b64encode(
-                        gzip.compress(uart_content)
-                    ).decode("ascii"),
+                    "uart_log_gzip_b64": base64.b64encode(gzip.compress(uart_content)).decode(
+                        "ascii"
+                    ),
                 }
             ],
         }
@@ -337,8 +440,6 @@ class PortalTests(TestCase):
                 anonymous = self.client.get(reverse("test-uart-download", args=[result.id]))
                 self.assertEqual(anonymous.status_code, 302)
                 self.client.force_login(self.user)
-                downloaded = self.client.get(
-                    reverse("test-uart-download", args=[result.id])
-                )
+                downloaded = self.client.get(reverse("test-uart-download", args=[result.id]))
                 self.assertEqual(downloaded.status_code, 200)
                 self.assertEqual(b"".join(downloaded.streaming_content), uart_content)

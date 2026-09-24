@@ -4,6 +4,12 @@ from . import views
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("run-elf/", views.elf_submit, name="elf-submit"),
+    path(
+        "run-elf/<uuid:submission_id>/",
+        views.elf_submission_detail,
+        name="elf-submission-detail",
+    ),
     path("boards/<slug:slug>/", views.board_detail, name="board-detail"),
     path(
         "boards/<slug:slug>/jobs/<str:job_name>/runs/<int:build_number>/",
@@ -46,4 +52,9 @@ urlpatterns = [
         name="test-uart-download",
     ),
     path("api/v1/runs/", views.ingest_run, name="api-ingest-run"),
+    path(
+        "api/v1/elf/<uuid:submission_id>/download/",
+        views.elf_download,
+        name="elf-download",
+    ),
 ]

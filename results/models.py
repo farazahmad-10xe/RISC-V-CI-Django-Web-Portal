@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.urls import reverse
@@ -29,6 +31,45 @@ class Board(models.Model):
 
     def get_absolute_url(self):
         return reverse("board-detail", kwargs={"slug": self.slug})
+
+
+def elf_upload_path(instance, filename):
+    return f"elf-uploads/{instance.id}/{filename}"
+
+
+class ElfSubmission(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="elf_submissions",
+    )
+    board = models.ForeignKey(Board, on_delete=models.PROTECT, related_name="elf_submissions")
+    elf = models.FileField(upload_to=elf_upload_path)
+    original_name = models.CharField(max_length=255)
+    sha256 = models.CharField(max_length=64)
+    size_bytes = models.PositiveBigIntegerField()
+    download_token_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    jenkins_queue_url = models.URLField(max_length=1000, blank=True)
+    run = models.OneToOneField(
+        "TestRun",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="elf_submission",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.original_name} on {self.board}"
+
+    def get_absolute_url(self):
+        return reverse("elf-submission-detail", kwargs={"submission_id": self.id})
 
 
 class JenkinsJob(models.Model):
@@ -171,9 +212,7 @@ class AnalysisColumn(models.Model):
     class Meta:
         ordering = ["position", "id"]
         constraints = [
-            models.UniqueConstraint(
-                fields=["run", "name"], name="unique_analysis_column_per_run"
-            )
+            models.UniqueConstraint(fields=["run", "name"], name="unique_analysis_column_per_run")
         ]
         permissions = [
             ("manage_failure_analysis", "Can manage build failure-analysis columns"),

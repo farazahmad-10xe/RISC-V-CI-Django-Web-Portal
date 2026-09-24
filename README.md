@@ -22,6 +22,20 @@ uv run python manage.py test
 uv run ruff check .
 ```
 
+## Single-ELF hardware execution
+
+Authenticated users can open **Run ELF**, upload an ELF64 little-endian RISC-V binary,
+and select an enabled board. The ELF must already use the selected board's linker layout and
+runtime environment. The portal verifies the file format and SHA-256, then triggers the
+`riscv-uart-single-elf` Jenkins job. Jenkins reserves the hardware, downloads the ELF with an
+opaque per-submission token, runs it over UART, and publishes the result and UART log through
+the normal ingest API.
+
+Configure the portal with `JENKINS_TRIGGER_URL`, a dedicated Jenkins service user and API token,
+`JENKINS_CA_FILE`, and `PORTAL_EXTERNAL_URL`. Keep the Jenkins API token only in
+`/etc/riscv-ci-portal.env`; do not add it to job parameters or source control. Uploaded files are
+stored below `PORTAL_UPLOAD_ROOT`, and the default maximum size is 32 MiB.
+
 ## Result ingestion
 
 Jenkins publishes a JSON document to `POST /portal/api/v1/runs/` with the token in `X-Portal-Token`. Reposting the same job and build number safely updates the run. Canonical run URLs contain both the Jenkins job name and build number, so build `#1` from two different jobs remains unambiguous.
