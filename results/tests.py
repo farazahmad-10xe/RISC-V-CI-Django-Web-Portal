@@ -164,6 +164,27 @@ class PortalTests(TestCase):
         self.assertRedirects(response, reverse("dashboard"))
         self.assertFalse(TestRun.objects.filter(id=run.id).exists())
 
+    def test_board_remove_action_is_visible_only_to_staff(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-uart-weekly")
+        TestRun.objects.create(job=job, build_number=11)
+
+        self.client.force_login(self.user)
+        response = self.client.get(board.get_absolute_url())
+        self.assertNotContains(response, "run-remove-button")
+
+        staff = get_user_model().objects.create_user(
+            "board-operator", password="safe-test-password", is_staff=True
+        )
+        self.client.force_login(staff)
+        response = self.client.get(board.get_absolute_url())
+        self.assertContains(response, "run-remove-button")
+        self.assertContains(response, "Remove vf2-uart-weekly build #11")
+        self.assertContains(
+            response,
+            "This removes the execution from the board page and main dashboard",
+        )
+
     def test_run_detail_not_run_filter_includes_skipped_and_unknown(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
         job = JenkinsJob.objects.create(board=board, name="vf2-job")
