@@ -489,6 +489,7 @@ def delete_run(request, slug, job_name, build_number):
         raise PermissionDenied("Only portal administrators can delete runs")
 
     run = _run_for_job(slug, job_name, build_number)
+    run_label = f"{run.job.name} build #{run.build_number}"
     board_url = run.job.board.get_absolute_url()
     uart_directory = (
         settings.PORTAL_ARTIFACT_ROOT
@@ -509,6 +510,9 @@ def delete_run(request, slug, job_name, build_number):
         if uart_directory.is_dir():
             shutil.rmtree(uart_directory)
 
+    messages.success(request, f"{run_label} was removed from the portal.")
+    if request.POST.get("return_to") == "dashboard":
+        return redirect("dashboard")
     return redirect(board_url)
 
 
