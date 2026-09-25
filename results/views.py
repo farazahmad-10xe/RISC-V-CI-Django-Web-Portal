@@ -206,9 +206,10 @@ def elf_download(request, submission_id):
 @login_required
 def dashboard(request):
     boards = list(Board.objects.filter(enabled=True).prefetch_related("jobs"))
+    weekly_runs = TestRun.objects.filter(job__name__endswith="-uart-weekly")
     for board in boards:
         board.latest_run = (
-            TestRun.objects.filter(job__board=board)
+            weekly_runs.filter(job__board=board)
             .select_related("job")
             .order_by("-updated_at", "-id")
             .first()
@@ -241,10 +242,10 @@ def dashboard(request):
                         "pass_percent": round(passed * 100 / executed, 1) if executed else 0,
                     }
                 )
-    recent_runs = TestRun.objects.select_related("job", "job__board").order_by(
+    recent_runs = weekly_runs.select_related("job", "job__board").order_by(
         "-updated_at", "-id"
     )[:12]
-    totals = TestRun.objects.aggregate(
+    totals = weekly_runs.aggregate(
         runs=Count("id"),
         passing=Count("id", filter=Q(status=Status.PASS)),
         failing=Count("id", filter=Q(status__in=[Status.FAIL, Status.UNSTABLE])),
@@ -261,7 +262,7 @@ def dashboard(request):
 def board_detail(request, slug):
     board = get_object_or_404(Board, slug=slug)
     runs = (
-        TestRun.objects.filter(job__board=board)
+        TestRun.objects.filter(job__board=board, job__name__endswith="-uart-weekly")
         .select_related("job")
         .order_by("-updated_at", "-id")
     )
@@ -277,17 +278,32 @@ def board_detail(request, slug):
 
 def _run_for_job(slug, job_name, build_number):
     return get_object_or_404(
-        TestRun.objects.select_related("job", "job__board"),
+        TestRun.objects.select_related("job", "job__board", "elf_submission"),
         job__board__slug=slug,
         job__name=job_name,
         build_number=build_number,
     )
 
 
+def _require_run_access(user, run):
+    if run.job.name != settings.JENKINS_SINGLE_ELF_JOB:
+        return
+    try:
+        submission = run.elf_submission
+    except ElfSubmission.DoesNotExist:
+        submission = None
+    if not user.is_staff and (submission is None or submission.uploaded_by_id != user.id):
+        raise PermissionDenied("This single-ELF result belongs to another user")
+
+
 @login_required
 def legacy_run_detail(request, slug, build_number):
     run = (
-        TestRun.objects.filter(job__board__slug=slug, build_number=build_number)
+        TestRun.objects.filter(
+            job__board__slug=slug,
+            job__name__endswith="-uart-weekly",
+            build_number=build_number,
+        )
         .select_related("job", "job__board")
         .order_by("-updated_at", "-id")
         .first()
@@ -300,6 +316,7 @@ def legacy_run_detail(request, slug, build_number):
 @login_required
 def run_detail(request, slug, job_name, build_number):
     run = _run_for_job(slug, job_name, build_number)
+    _require_run_access(request.user, run)
     results = run.test_results.select_related("test_case")
     status = request.GET.get("status", "").upper()
     query = request.GET.get("q", "").strip()
@@ -349,6 +366,7 @@ def _can_manage_analysis(user):
 @login_required
 def run_workbook(request, slug, job_name, build_number):
     run = _run_for_job(slug, job_name, build_number)
+    _require_run_access(request.user, run)
     selected_suite = request.GET.get("suite", "All")
     suites = ("All", "Privileged", "Non-Privileged", "Vector")
     if selected_suite not in suites:
@@ -422,6 +440,7 @@ def add_analysis_column(request, slug, job_name, build_number):
     if not _can_manage_analysis(request.user):
         raise PermissionDenied("You cannot add failure-analysis columns")
     run = _run_for_job(slug, job_name, build_number)
+    _require_run_access(request.user, run)
     name = " ".join(request.POST.get("name", "").split())
     if not name or len(name) > 80:
         messages.error(request, "Column name must contain 1–80 characters.")
@@ -448,6 +467,7 @@ def save_analysis_column(request, slug, job_name, build_number, column_id):
     if not _can_manage_analysis(request.user):
         raise PermissionDenied("You cannot edit failure analysis")
     run = _run_for_job(slug, job_name, build_number)
+    _require_run_access(request.user, run)
     column = get_object_or_404(AnalysisColumn, id=column_id, run=run)
     result_ids = []
     submitted = {}
@@ -518,7 +538,10 @@ def delete_run(request, slug, job_name, build_number):
 
 @login_required
 def artifact_download(request, artifact_id):
-    artifact = get_object_or_404(Artifact, id=artifact_id)
+    artifact = get_object_or_404(
+        Artifact.objects.select_related("run__job", "run__elf_submission"), id=artifact_id
+    )
+    _require_run_access(request.user, artifact.run)
     root = settings.PORTAL_ARTIFACT_ROOT
     candidate = (root / artifact.relative_path).resolve()
     try:
@@ -532,7 +555,13 @@ def artifact_download(request, artifact_id):
 
 @login_required
 def test_uart_download(request, result_id):
-    result = get_object_or_404(TestResult.objects.select_related("test_case"), id=result_id)
+    result = get_object_or_404(
+        TestResult.objects.select_related(
+            "test_case", "run__job", "run__elf_submission"
+        ),
+        id=result_id,
+    )
+    _require_run_access(request.user, result.run)
     if not result.log_path or result.log_path.startswith(("http://", "https://")):
         raise Http404("UART log is not stored by the portal")
     root = settings.PORTAL_ARTIFACT_ROOT
