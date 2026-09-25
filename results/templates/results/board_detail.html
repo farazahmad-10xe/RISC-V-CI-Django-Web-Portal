@@ -7,7 +7,33 @@
   <form method="get"><label>Status<select name="status" onchange="this.form.submit()"><option value="">All statuses</option>{% for value,label in statuses %}<option value="{{ value }}">{{ label }}</option>{% endfor %}<option value="PASS" {% if selected_status == 'PASS' %}selected{% endif %}>Pass</option><option value="FAIL" {% if selected_status == 'FAIL' %}selected{% endif %}>Fail</option><option value="RUNNING" {% if selected_status == 'RUNNING' %}selected{% endif %}>Running</option><option value="UNSTABLE" {% if selected_status == 'UNSTABLE' %}selected{% endif %}>Unstable</option></select></label></form>
 </section>
 <section class="panel table-panel">
-  <table><thead><tr><th>Build</th><th>Job</th><th>Status</th><th>PASS / Total</th><th>Executed</th><th>Fail</th><th>Sail</th><th>Runner revision</th><th>ACT revision</th><th>Started</th></tr></thead>
-  <tbody>{% for run in runs %}<tr data-href="{{ run.get_absolute_url }}"><td><strong>#{{ run.build_number }}</strong></td><td>{{ run.job.name }}</td><td><span class="badge status-{{ run.status|lower }}">{{ run.get_status_display }}</span></td><td class="text-pass">{{ run.passed_cases }} / {{ run.expected_cases }}</td><td>{{ run.completed_cases }}</td><td class="text-fail">{{ run.failed_cases }}</td><td>{{ run.metadata.sail_version|default:"—" }}</td><td><code>{{ run.git_revision|truncatechars:13|default:"—" }}</code></td><td><code>{{ run.act_revision|truncatechars:13|default:"—" }}</code></td><td>{{ run.started_at|date:"M d, Y H:i"|default:"—" }}</td></tr>{% empty %}<tr><td colspan="10" class="empty">No runs found.</td></tr>{% endfor %}</tbody></table>
+  <table>
+    <thead><tr><th>Build</th><th>Job</th><th>Status</th><th>PASS / Total</th><th>Executed</th><th>Fail</th><th>Sail</th><th>Runner revision</th><th>ACT revision</th><th>Started</th>{% if request.user.is_staff %}<th class="run-action-heading">Remove</th>{% endif %}</tr></thead>
+    <tbody>
+      {% for run in runs %}
+      <tr data-href="{{ run.get_absolute_url }}">
+        <td><strong>#{{ run.build_number }}</strong></td><td>{{ run.job.name }}</td><td><span class="badge status-{{ run.status|lower }}">{{ run.get_status_display }}</span></td><td class="text-pass">{{ run.passed_cases }} / {{ run.expected_cases }}</td><td>{{ run.completed_cases }}</td><td class="text-fail">{{ run.failed_cases }}</td><td>{{ run.metadata.sail_version|default:"—" }}</td><td><code>{{ run.git_revision|truncatechars:13|default:"—" }}</code></td><td><code>{{ run.act_revision|truncatechars:13|default:"—" }}</code></td><td>{{ run.started_at|date:"M d, Y H:i"|default:"—" }}</td>
+        {% if request.user.is_staff %}<td class="run-action-cell"><button class="run-remove-button" type="button" data-dialog-open="delete-board-run-{{ run.id }}" title="Remove {{ run.job.name }} build #{{ run.build_number }} from the portal" aria-label="Remove {{ run.job.name }} build #{{ run.build_number }} from the portal">&times;</button></td>{% endif %}
+      </tr>
+      {% empty %}<tr><td colspan="{% if request.user.is_staff %}11{% else %}10{% endif %}" class="empty">No runs found.</td></tr>{% endfor %}
+    </tbody>
+  </table>
 </section>
+{% if request.user.is_staff %}
+  {% for run in runs %}
+  <dialog class="confirm-dialog" id="delete-board-run-{{ run.id }}" aria-labelledby="delete-board-run-title-{{ run.id }}">
+    <form method="post" action="{% url 'run-delete' run.job.board.slug run.job.name run.build_number %}">
+      {% csrf_token %}
+      <div class="confirm-dialog-icon" aria-hidden="true">!</div>
+      <p class="eyebrow">Confirm deletion</p>
+      <h2 id="delete-board-run-title-{{ run.id }}">Remove {{ run.job.name }} build #{{ run.build_number }}?</h2>
+      <p>This removes the execution from the board page and main dashboard, including its portal-hosted UART logs. The Jenkins build and Jenkins artifacts remain unchanged.</p>
+      <div class="confirm-dialog-actions">
+        <button class="button secondary" type="button" data-dialog-close>Cancel</button>
+        <button class="button danger-solid" type="submit">OK, remove</button>
+      </div>
+    </form>
+  </dialog>
+  {% endfor %}
+{% endif %}
 {% endblock %}
