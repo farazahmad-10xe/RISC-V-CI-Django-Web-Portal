@@ -109,7 +109,14 @@ class PortalTests(TestCase):
     def test_dashboard_shows_suite_results_for_each_board(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
         job = JenkinsJob.objects.create(board=board, name="vf2-job")
-        run = TestRun.objects.create(job=job, build_number=1)
+        run = TestRun.objects.create(
+            job=job,
+            build_number=1,
+            expected_cases=2,
+            completed_cases=2,
+            passed_cases=1,
+            failed_cases=1,
+        )
         passing = ACTTestCase.objects.create(name="ExceptionsM-01", category="Privileged")
         failing = ACTTestCase.objects.create(name="I-add-01", category="Non-Privileged")
         TestResult.objects.create(
@@ -129,6 +136,9 @@ class PortalTests(TestCase):
         self.assertContains(response, "Non-Privileged")
         self.assertContains(response, "1 passed · 0 failed · 1 executed")
         self.assertContains(response, "0 passed · 1 failed · 1 executed")
+        self.assertContains(response, "1 / 2 passed")
+        self.assertContains(response, 'style="width: 50.0%"')
+        self.assertContains(response, "PASS / Total")
 
     def test_dashboard_remove_action_is_visible_only_to_staff(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")

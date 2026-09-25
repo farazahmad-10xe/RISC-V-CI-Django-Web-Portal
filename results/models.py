@@ -128,6 +128,12 @@ class TestRun(models.Model):
         return min(100, round(self.completed_cases * 100 / self.expected_cases))
 
     @property
+    def passed_percent_of_total(self):
+        if not self.expected_cases:
+            return 0
+        return min(100, round(self.passed_cases * 100 / self.expected_cases, 1))
+
+    @property
     def pass_percent(self):
         decided = self.passed_cases + self.failed_cases
         return round(self.passed_cases * 100 / decided, 1) if decided else 0
