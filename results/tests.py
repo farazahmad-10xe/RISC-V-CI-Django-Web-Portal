@@ -130,6 +130,40 @@ class PortalTests(TestCase):
         self.assertContains(response, "1 passed · 0 failed · 1 executed")
         self.assertContains(response, "0 passed · 1 failed · 1 executed")
 
+    def test_dashboard_remove_action_is_visible_only_to_staff(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-uart-sanity")
+        TestRun.objects.create(job=job, build_number=7)
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("dashboard"))
+        self.assertNotContains(response, "run-remove-button")
+
+        staff = get_user_model().objects.create_user(
+            "dashboard-operator", password="safe-test-password", is_staff=True
+        )
+        self.client.force_login(staff)
+        response = self.client.get(reverse("dashboard"))
+        self.assertContains(response, "run-remove-button")
+        self.assertContains(response, "Remove vf2-uart-sanity build #7")
+
+    def test_staff_can_remove_run_from_dashboard_and_return_to_dashboard(self):
+        staff = get_user_model().objects.create_user(
+            "dashboard-operator", password="safe-test-password", is_staff=True
+        )
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="vf2-uart-sanity")
+        run = TestRun.objects.create(job=job, build_number=7)
+
+        self.client.force_login(staff)
+        response = self.client.post(
+            reverse("run-delete", args=["vf2", "vf2-uart-sanity", 7]),
+            {"return_to": "dashboard"},
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertFalse(TestRun.objects.filter(id=run.id).exists())
+
     def test_run_detail_not_run_filter_includes_skipped_and_unknown(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
         job = JenkinsJob.objects.create(board=board, name="vf2-job")

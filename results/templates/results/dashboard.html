@@ -48,16 +48,35 @@
 <div class="section-heading"><div><p class="eyebrow">Activity</p><h2>Recent runs</h2></div></div>
 <section class="panel table-panel">
   <table>
-    <thead><tr><th>Board</th><th>Job</th><th>Build</th><th>Status</th><th>Tests</th><th>Pass rate</th><th>Started</th></tr></thead>
+    <thead><tr><th>Board</th><th>Job</th><th>Build</th><th>Status</th><th>Tests</th><th>Pass rate</th><th>Started</th>{% if request.user.is_staff %}<th class="run-action-heading">Remove</th>{% endif %}</tr></thead>
     <tbody>
       {% for run in recent_runs %}
       <tr data-href="{{ run.get_absolute_url }}">
         <td><strong>{{ run.job.board.name }}</strong></td><td>{{ run.job.name }}</td><td>#{{ run.build_number }}</td>
         <td><span class="badge status-{{ run.status|lower }}">{{ run.get_status_display }}</span></td>
         <td>{{ run.completed_cases }} / {{ run.expected_cases }}</td><td>{{ run.pass_percent }}%</td><td>{{ run.started_at|date:"M d, Y H:i"|default:"—" }}</td>
+        {% if request.user.is_staff %}<td class="run-action-cell"><button class="run-remove-button" type="button" data-dialog-open="delete-dashboard-run-{{ run.id }}" title="Remove {{ run.job.name }} build #{{ run.build_number }} from the portal" aria-label="Remove {{ run.job.name }} build #{{ run.build_number }} from the portal">&times;</button></td>{% endif %}
       </tr>
-      {% empty %}<tr><td colspan="7" class="empty">No runs published yet.</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="{% if request.user.is_staff %}8{% else %}7{% endif %}" class="empty">No runs published yet.</td></tr>{% endfor %}
     </tbody>
   </table>
 </section>
+{% if request.user.is_staff %}
+  {% for run in recent_runs %}
+  <dialog class="confirm-dialog" id="delete-dashboard-run-{{ run.id }}" aria-labelledby="delete-dashboard-run-title-{{ run.id }}">
+    <form method="post" action="{% url 'run-delete' run.job.board.slug run.job.name run.build_number %}">
+      {% csrf_token %}
+      <input type="hidden" name="return_to" value="dashboard">
+      <div class="confirm-dialog-icon" aria-hidden="true">!</div>
+      <p class="eyebrow">Confirm deletion</p>
+      <h2 id="delete-dashboard-run-title-{{ run.id }}">Remove {{ run.job.name }} build #{{ run.build_number }}?</h2>
+      <p>This removes the execution and its portal-hosted UART logs. The Jenkins build and Jenkins artifacts remain unchanged.</p>
+      <div class="confirm-dialog-actions">
+        <button class="button secondary" type="button" data-dialog-close>Cancel</button>
+        <button class="button danger-solid" type="submit">OK, remove</button>
+      </div>
+    </form>
+  </dialog>
+  {% endfor %}
+{% endif %}
 {% endblock %}

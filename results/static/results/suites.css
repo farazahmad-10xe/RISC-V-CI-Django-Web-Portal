@@ -115,6 +115,33 @@
   background: rgba(255, 107, 120, .09);
 }
 
+.run-action-heading,
+.run-action-cell {
+  width: 72px;
+  text-align: center;
+}
+
+.run-remove-button {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--red);
+  border: 1px solid rgba(255, 107, 120, .38);
+  border-radius: 50%;
+  background: rgba(255, 107, 120, .06);
+  font: 700 20px/1 sans-serif;
+  cursor: pointer;
+}
+
+.run-remove-button:hover,
+.run-remove-button:focus-visible {
+  border-color: var(--red);
+  background: rgba(255, 107, 120, .14);
+  outline: none;
+}
+
 .confirm-dialog {
   width: min(460px, calc(100% - 32px));
   padding: 0;
