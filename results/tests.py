@@ -108,7 +108,7 @@ class PortalTests(TestCase):
 
     def test_dashboard_shows_suite_results_for_each_board(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
-        job = JenkinsJob.objects.create(board=board, name="vf2-job")
+        job = JenkinsJob.objects.create(board=board, name="vf2-uart-weekly")
         run = TestRun.objects.create(
             job=job,
             build_number=1,
@@ -142,7 +142,7 @@ class PortalTests(TestCase):
 
     def test_dashboard_remove_action_is_visible_only_to_staff(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
-        job = JenkinsJob.objects.create(board=board, name="vf2-uart-sanity")
+        job = JenkinsJob.objects.create(board=board, name="vf2-uart-weekly")
         TestRun.objects.create(job=job, build_number=7)
 
         self.client.force_login(self.user)
@@ -155,24 +155,76 @@ class PortalTests(TestCase):
         self.client.force_login(staff)
         response = self.client.get(reverse("dashboard"))
         self.assertContains(response, "run-remove-button")
-        self.assertContains(response, "Remove vf2-uart-sanity build #7")
+        self.assertContains(response, "Remove vf2-uart-weekly build #7")
 
     def test_staff_can_remove_run_from_dashboard_and_return_to_dashboard(self):
         staff = get_user_model().objects.create_user(
             "dashboard-operator", password="safe-test-password", is_staff=True
         )
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
-        job = JenkinsJob.objects.create(board=board, name="vf2-uart-sanity")
+        job = JenkinsJob.objects.create(board=board, name="vf2-uart-weekly")
         run = TestRun.objects.create(job=job, build_number=7)
 
         self.client.force_login(staff)
         response = self.client.post(
-            reverse("run-delete", args=["vf2", "vf2-uart-sanity", 7]),
+            reverse("run-delete", args=["vf2", "vf2-uart-weekly", 7]),
             {"return_to": "dashboard"},
         )
 
         self.assertRedirects(response, reverse("dashboard"))
         self.assertFalse(TestRun.objects.filter(id=run.id).exists())
+
+    def test_dashboard_and_board_pages_show_only_uart_weekly_runs(self):
+        board = Board.objects.create(slug="vf2", name="VisionFive 2")
+        weekly_job = JenkinsJob.objects.create(board=board, name="vf2-uart-weekly")
+        sanity_job = JenkinsJob.objects.create(board=board, name="vf2-uart-sanity")
+        single_job = JenkinsJob.objects.create(board=board, name="riscv-uart-single-elf")
+        TestRun.objects.create(job=weekly_job, build_number=3, status=Status.PASS)
+        TestRun.objects.create(job=sanity_job, build_number=4, status=Status.FAIL)
+        TestRun.objects.create(job=single_job, build_number=5, status=Status.FAIL)
+
+        self.client.force_login(self.user)
+        dashboard = self.client.get(reverse("dashboard"))
+        board_page = self.client.get(board.get_absolute_url())
+
+        for response in (dashboard, board_page):
+            self.assertContains(response, "vf2-uart-weekly")
+            self.assertNotContains(response, "vf2-uart-sanity")
+            self.assertNotContains(response, "riscv-uart-single-elf")
+        self.assertContains(dashboard, "Total runs</span><strong>1</strong>")
+
+    def test_single_elf_result_is_private_to_submitter_and_staff(self):
+        board = Board.objects.create(slug="visionfive2", name="VisionFive 2")
+        job = JenkinsJob.objects.create(board=board, name="riscv-uart-single-elf")
+        run = TestRun.objects.create(job=job, build_number=15, status=Status.PASS)
+        submission = ElfSubmission.objects.create(
+            uploaded_by=self.user,
+            board=board,
+            elf="elf-uploads/private.elf",
+            original_name="private.elf",
+            sha256="0" * 64,
+            size_bytes=64,
+            download_token_hash="",
+            run=run,
+        )
+        other_user = get_user_model().objects.create_user(
+            "other-viewer", password="safe-test-password"
+        )
+        staff = get_user_model().objects.create_user(
+            "single-elf-admin", password="safe-test-password", is_staff=True
+        )
+
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get(submission.get_absolute_url()).status_code, 200)
+        self.assertEqual(self.client.get(run.get_absolute_url()).status_code, 200)
+
+        self.client.force_login(other_user)
+        self.assertEqual(self.client.get(submission.get_absolute_url()).status_code, 403)
+        self.assertEqual(self.client.get(run.get_absolute_url()).status_code, 403)
+
+        self.client.force_login(staff)
+        self.assertEqual(self.client.get(submission.get_absolute_url()).status_code, 200)
+        self.assertEqual(self.client.get(run.get_absolute_url()).status_code, 200)
 
     def test_board_remove_action_is_visible_only_to_staff(self):
         board = Board.objects.create(slug="vf2", name="VisionFive 2")
